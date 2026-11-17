@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-code"
+description = "Enables the reset_code command without any pre-configured scope."
+commands.allow = ["reset_code"]
+
+[[permission]]
+identifier = "deny-reset-code"
+description = "Denies the reset_code command without any pre-configured scope."
+commands.deny = ["reset_code"]

@@ -1,0 +1,18 @@
+{
+  "identifier": "main",
+  "description": "FA1's own window: the app's commands and its events. The Robinauts window has none.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default",
+    "allow-state",
+    "allow-plan",
+    "allow-checks",
+    "allow-save-keys",
+    "allow-start",
+    "allow-stop",
+    "allow-status",
+    "allow-open-robinauts",
+    "allow-reset-code",
+    "allow-remove-everything"
+  ]
+}
