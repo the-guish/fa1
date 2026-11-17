@@ -1,0 +1,119 @@
+# FA1's mode 2: the control plane and the code worker in containers (docs/specs/containers.md).
+# The app runs this project as `fa1`, with two variables:
+#
+#   FA1_PORT     the port of the front listener, on the host's 127.0.0.1 and in `control`
+#   FA1_SECRETS  the app's secrets folder: control.env, code.env, files.env, launch, worker_token
+#
+# Every image is built here, from Robinauts at the pinned commit and from this folder.
+
+name: fa1
+
+x-robinauts: &robinauts https://github.com/the-guish/robinauts.git#bba8cea7bfc803f4955faf8f6ca3c9d0e387b463
+
+x-mcp: &mcp
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  mem_limit: 512m
+  pids_limit: 256
+  restart: unless-stopped
+
+services:
+  # Robinauts' server, in the local mode, on SQLite. The front listener is published on the
+  # host's loopback. The worker listener is on the container's loopback: `code` shares this
+  # container's network and reaches it there.
+  control:
+    build:
+      context: *robinauts
+    command:
+      - sh
+      - -c
+      - >-
+        exec robinauts start --local --host 0.0.0.0 --public-host 127.0.0.1 --port ${FA1_PORT:?}
+        --worker-host 127.0.0.1 --worker-port 8421 < /run/secrets/launch
+    environment:
+      ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
+      ROBINAUTS_DATA_DIR: /var/lib/robinauts/data
+    env_file: ${FA1_SECRETS:?}/control.env
+    secrets: [launch]
+    volumes:
+      - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - control-data:/var/lib/robinauts
+    ports:
+      - 127.0.0.1:${FA1_PORT:?}:${FA1_PORT:?}
+    restart: unless-stopped
+
+  # The Claude Code worker. It reads its token from a file, and reaches the worker listener on
+  # 127.0.0.1, a broker the personal sign-in accepts.
+  code:
+    build:
+      context: *robinauts
+      dockerfile: extra-workers/claude-code-worker/Dockerfile
+    network_mode: service:control
+    depends_on: [control]
+    environment:
+      ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
+      ROBINAUTS_WORKER_NAME: claude
+      ROBINAUTS_WORKER_BROKER_URL: http://127.0.0.1:8421/robinauts
+      ONEBERTH_TOKEN_FILE: /run/secrets/worker_token
+      ROBINAUTS_CLAUDE_AUTH: personal
+      ROBINAUTS_CLAUDE_PERMISSION_MODE: bypassPermissions
+      # git sends GITHUB_TOKEN to github.com when the agent's git asks for a password.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_0: "!f() { echo username=x-access-token; echo password=$$GITHUB_TOKEN; }; f"
+    env_file: ${FA1_SECRETS:?}/code.env
+    secrets: [worker_token]
+    volumes:
+      - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - code-claude:/var/lib/claude
+      - code-workspaces:/workspace
+    restart: unless-stopped
+
+  fetch:
+    <<: *mcp
+    build: ./fetch
+
+  # Playwright MCP, headless Chromium. Its image adds --headless --browser chromium --no-sandbox.
+  browser:
+    <<: *mcp
+    image: mcr.microsoft.com/playwright/mcp:v0.0.85
+    command: [--isolated, --host, 0.0.0.0, --port, "8931", --allowed-hosts, "browser:8931"]
+    mem_limit: 1g
+    tmpfs: [/tmp, /home/pwuser]
+
+  files:
+    <<: *mcp
+    build: ./files
+    env_file: ${FA1_SECRETS:?}/files.env
+    volumes:
+      - files:/agents-fs
+
+  todo:
+    <<: *mcp
+    build:
+      context: ./todo
+      additional_contexts:
+        source: https://github.com/the-guish/robinauts.git#bba8cea7bfc803f4955faf8f6ca3c9d0e387b463:mcp/to-do-list
+    volumes:
+      - todos:/data
+
+  diagrams:
+    <<: *mcp
+    build:
+      context: ./diagrams
+      additional_contexts:
+        source: https://github.com/the-guish/robinauts.git#bba8cea7bfc803f4955faf8f6ca3c9d0e387b463:mcp/diagrams
+
+secrets:
+  launch:
+    file: ${FA1_SECRETS:?}/launch
+  worker_token:
+    file: ${FA1_SECRETS:?}/worker_token
+
+volumes:
+  control-data: {}
+  code-claude: {}
+  code-workspaces: {}
+  files: {}
+  todos: {}

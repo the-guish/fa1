@@ -13,16 +13,16 @@ its screens.
 | action | mode 2 | mode 3 |
 |---|---|---|
 | check the prerequisites | `docker version`, `docker compose version` | the accelerator, `qemu-system-*`, `qemu-img` |
-| download | Robinauts' source at the pinned commit | the same, and Debian's cloud image with its signed checksums |
+| download | nothing: the build fetches Robinauts at the pinned commit | Robinauts at the pinned commit, and Debian's cloud image with its signed checksums |
 | build | `docker compose build` | a build VM per role ([vms.md](vms.md)) |
 | start, stop | `docker compose up`, `docker compose stop` | `qemu-system-*` per VM, a signal to stop |
 | logs | `docker compose logs` | each VM's console, written to a file |
 | reset the code worker | remove its container and its volumes | delete its overlay and its data disk |
-| remove everything | `docker compose down --volumes --rmi local`, then the folder | stop the VMs, then the folder |
+| remove everything | `docker compose down --volumes --rmi all`, then the folder | stop the VMs, then the folder |
 
 The app also speaks HTTP to the control plane on `127.0.0.1` ([core.md](core.md)).
 
-## Windows
+## The two windows
 
 - FA1's own screens are in one window. They are bundled with the app, and call the core.
 - Robinauts opens in a second window, at `127.0.0.1`. That window has no access to the core.
@@ -59,17 +59,17 @@ It holds:
 
 ## Distribution
 
-FA1 is one archive per platform. The person unpacks it anywhere they can write, such as `~/bin`.
+FA1 is one `.tar.gz` archive per platform. The person unpacks it anywhere they can write, such
+as `~/bin`.
 
 | platform | archive | the system provides |
 |---|---|---|
-| Linux | `fa1-linux-<arch>.tar.gz`: the `fa1` program | WebKitGTK 4.1, Docker or QEMU |
-| macOS | `fa1-macos-<arch>.zip`: `FA1.app`, signed and notarized | WebKit, Docker or QEMU |
-| Windows | `fa1-windows-<arch>.zip`: `fa1.exe` | WebView2, Docker or QEMU |
+| Linux | `fa1-linux-<arch>.tar.gz`: the `fa1` program | WebKitGTK 4.1, and Docker or QEMU |
+| macOS | `fa1-macos-<arch>.tar.gz`: `FA1.app` | WebKit, and Docker or QEMU |
 
 - The app installs nothing by itself. The Checks screen shows the command for each missing
   prerequisite, and the person runs it. On Debian, that command is `apt install`.
-- An installer per platform can come later. It wraps the same program.
+- Windows comes later, with mode 3.
 
 ## Removal
 
