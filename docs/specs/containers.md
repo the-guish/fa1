@@ -6,60 +6,78 @@ the code worker.
 
 ## The project
 
-The app runs one Compose project, `fa1`, from `compose/` in its folder.
+The app runs one Compose project, `fa1`, from `compose/` in its folder. The files come from
+[compose/](../../compose) in this repository.
 
 | service | image | role |
 |---|---|---|
 | `control` | Robinauts' `Dockerfile`, at the pinned commit | the server, in the local mode, on SQLite |
 | `code` | the Claude Code worker's `Dockerfile`, at the same commit | the coding agents |
-| `fetch`, `browser`, `search`, `files` | FA1's Dockerfiles, versions pinned | MCP servers for the web and a folder |
+| `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
 
-Every image is built on the host by `docker compose build`.
+- Every image is built on the host by `docker compose build`. Compose builds through Bake.
+- The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.
 
-## Networks
+## Network
 
-| network | kind | members | for |
-|---|---|---|---|
-| `link` | internal | `control`, `code`, the MCP servers | the worker listener and the MCP servers |
-| `out` | with a way out | `control`, `code`, `fetch`, `browser`, `search` | the internet |
+- The project has one network, with a way out. Every service reaches the others by name.
+- `control` publishes its front listener on the host's `127.0.0.1`, at the app's port. No other
+  service publishes a port.
+- `code` shares the network of `control` (`network_mode: service:control`).
+- The worker listener is on the loopback of `control`. `code` alone reaches it there, at
+  `http://127.0.0.1:8421/robinauts`.
 
-- `control` publishes its front listener on the host's `127.0.0.1`, at the app's port.
-- No other service publishes a port.
-- `control` serves the front listener on `out` and the worker listener on `link`:
-  `robinauts start --local --host <its address on out> --public-host 127.0.0.1 --worker-host
-  <its address on link>`.
+The worker in the personal sign-in accepts a broker on loopback or a private address. A
+service's name is neither, so `code` shares the network of `control`.
+
+```sh
+robinauts start --local --host 0.0.0.0 --public-host 127.0.0.1 --port <port> \
+    --worker-host 127.0.0.1 --worker-port 8421
+```
 
 ## Storage
 
 Each service keeps its data in a named volume of the project:
 
-| volume | service | holds |
-|---|---|---|
-| `control-data` | `control` | `robinauts.db`, `oneberth.db`, `neorc.db` |
-| `code-claude` | `code` | Claude Code's transcripts |
-| `code-workspaces` | `code` | a directory per conversation |
-| `files` | `files` | the folder of the files tool |
-| `todos` | `todo` | the to-do list |
+| volume | service | mounted at | holds |
+|---|---|---|---|
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db` |
+| `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
+| `code-workspaces` | `code` | `/workspace` | a directory per conversation |
+| `files` | `files` | `/agents-fs` | the folder of the files tool |
+| `todos` | `todo` | `/data` | the to-do list |
 
-No service mounts a host folder or the Docker socket.
+- A volume mounted on a folder of the image takes the folder's owner. Each service writes its
+  volume as the image's own user.
+- No service mounts a host folder or the Docker socket.
 
 ## Secrets
 
-- The app writes each secret to a file in `secrets/`. Compose mounts each file in
-  `/run/secrets/` of its service.
-- `control` reads the launch secret on its standard input, from `/run/secrets/launch`.
-- `code` reads its token from the file `ONEBERTH_TOKEN_FILE` names.
-- `control` holds the model providers' keys. `code` holds the Claude Code token and the GitHub
-  token.
+The app writes the secrets to `secrets/` in its folder. The folder is readable by the person
+alone, and its files by every user, so the containers' users read them.
+
+| file | read by | as |
+|---|---|---|
+| `launch` | `control` | standard input, from `/run/secrets/launch` |
+| `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
+| `control.env` | `control` | variables: the Anthropic API key, the files server's key |
+| `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author |
+| `files.env` | `files` | variables: the files server's key |
+
+- Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
+- The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
+  out.
 
 ## Starting
 
-1. The app writes the secrets files.
-2. `docker compose up control` and the MCP servers. The app waits for `/auth/session` to answer.
-3. With no worker token yet, the app creates one and writes it to its file.
-4. `docker compose up code`.
-5. The app asks for a ticket and opens Robinauts.
+1. The app writes the secrets files. `worker_token` starts empty.
+2. `docker compose up` for `control` and the MCP servers. The app waits for `/auth/session`.
+3. With no worker token yet, the app creates one with `POST /auth/services`: the role
+   `robinauts/worker` and the resource `claude`. It writes the token to `worker_token`.
+4. `docker compose up` for `code`.
+5. `/health` answers `ok` once `code` reaches the worker listener. The app asks for a ticket and
+   opens Robinauts.
 
 ## The code worker
 
@@ -67,18 +85,23 @@ No service mounts a host folder or the Docker socket.
 - It runs as a user without root, in its own container.
 - It reaches the internet, the worker listener and the MCP servers.
 
+## Removal
+
+- `docker compose down --volumes --rmi all` removes the containers, the network, the volumes and
+  the images.
+- Docker keeps its build cache. `docker builder prune` clears it for every project on the host,
+  so the last screen shows it as a choice.
+
 ## Docker on each platform
 
 | platform | engine |
 |---|---|
-| Linux | Docker Engine, from the distribution or Docker's packages |
-| macOS | Colima |
-| Windows | open |
+| Linux | Docker Engine with the Compose plugin, from the distribution or Docker's packages |
+| macOS | Colima, with the Docker CLI and the Compose plugin |
 
 The app uses the engine the `docker` command reaches. The person installs it.
 
 ## Open
 
-- The Docker engine on Windows.
 - Secrets files on macOS, where Colima shares only some host folders with its VM.
-- A container on `out` reaches the host and the LAN. Mode 2 accepts it.
+- A container reaches the host and the LAN. Mode 2 accepts it.
