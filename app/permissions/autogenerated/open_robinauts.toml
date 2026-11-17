@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-robinauts"
+description = "Enables the open_robinauts command without any pre-configured scope."
+commands.allow = ["open_robinauts"]
+
+[[permission]]
+identifier = "deny-open-robinauts"
+description = "Denies the open_robinauts command without any pre-configured scope."
+commands.deny = ["open_robinauts"]

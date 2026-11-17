@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FA1</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>FA1</h1>
+    <nav>
+      <button data-go="welcome">Mode</button>
+      <button data-go="checks">Checks</button>
+      <button data-go="keys">Keys</button>
+      <button data-go="run">Status</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="welcome">
+      <h2>How should the coding agents be kept apart?</h2>
+      <div class="modes">
+        <label class="mode off">
+          <input type="radio" name="mode" value="host" disabled>
+          <strong>Same host</strong>
+          <span>The agents reach everything you can. Not available yet.</span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="containers" checked>
+          <strong>Containers</strong>
+          <span>Robinauts and the coding agents run in Docker containers. This prevents accidents: an
+            agent's command changes its own container. A container shares your computer's kernel, so it
+            is no wall against a hostile agent.</span>
+        </label>
+        <label class="mode off">
+          <input type="radio" name="mode" value="vms" disabled>
+          <strong>Virtual machines</strong>
+          <span>The coding agents run in a VM of their own. Not available yet.</span>
+        </label>
+      </div>
+      <p>FA1 keeps everything it makes in <code id="folder"></code>.</p>
+      <details>
+        <summary>What the first start runs</summary>
+        <ol id="plan"></ol>
+      </details>
+      <button class="primary" data-go="checks">Next</button>
+    </section>
+
+    <section id="checks" hidden>
+      <h2>Checks</h2>
+      <p>Containers mode needs Docker, with Compose and Buildx. FA1 installs nothing itself: when
+        something is missing, run the commands shown, then check again.</p>
+      <ul id="check-list"></ul>
+      <button id="recheck">Check again</button>
+      <button class="primary" data-go="keys">Next</button>
+    </section>
+
+    <section id="keys" hidden>
+      <h2>Keys</h2>
+      <p>FA1 keeps them in its folder, readable by you alone. A field left empty keeps the key saved
+        before.</p>
+      <form id="key-form">
+        <label>Claude Code token <em>needed</em>
+          <input type="password" name="claude_code" autocomplete="off" placeholder="from claude setup-token">
+          <small data-given="claude_code"></small>
+        </label>
+        <label>Anthropic API key <em>for the Assistant</em>
+          <input type="password" name="anthropic" autocomplete="off" placeholder="sk-ant-...">
+          <small data-given="anthropic"></small>
+        </label>
+        <label>GitHub token <em>optional</em>
+          <input type="password" name="github" autocomplete="off" placeholder="github_pat_...">
+          <small data-given="github"></small>
+        </label>
+        <label>Your name, for the agents' commits <em>optional</em>
+          <input type="text" name="git_name" autocomplete="off">
+        </label>
+        <label>Your email, for the agents' commits <em>optional</em>
+          <input type="email" name="git_email" autocomplete="off">
+        </label>
+        <button class="primary" type="submit">Save and continue</button>
+      </form>
+    </section>
+
+    <section id="run" hidden>
+      <h2>Status</h2>
+      <div class="row">
+        <button class="primary" id="start">Start</button>
+        <button id="open">Open Robinauts</button>
+        <button id="stop">Stop</button>
+        <button id="refresh">Refresh</button>
+      </div>
+      <p>Health: <strong id="health">unknown</strong></p>
+      <pre id="containers"></pre>
+      <h3>Log</h3>
+      <pre id="log"></pre>
+      <h3>Reset and removal</h3>
+      <div class="row">
+        <button id="reset">Reset the code worker</button>
+        <button class="danger" id="remove">Remove everything</button>
+      </div>
+      <p id="removed" hidden>FA1 removed its containers, volumes, images and folder. Delete the unpacked
+        archive to finish. Docker stays installed, and keeps its build cache:
+        <code>docker builder prune</code> clears it, for every project on this computer.</p>
+    </section>
+  </main>
+</body>
+</html>

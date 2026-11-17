@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-keys"
+description = "Enables the save_keys command without any pre-configured scope."
+commands.allow = ["save_keys"]
+
+[[permission]]
+identifier = "deny-save-keys"
+description = "Denies the save_keys command without any pre-configured scope."
+commands.deny = ["save_keys"]

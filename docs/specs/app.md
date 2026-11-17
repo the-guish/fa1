@@ -25,7 +25,9 @@ The app also speaks HTTP to the control plane on `127.0.0.1` ([core.md](core.md)
 ## The two windows
 
 - FA1's own screens are in one window. They are bundled with the app, and call the core.
-- Robinauts opens in a second window, at `127.0.0.1`. That window has no access to the core.
+- Robinauts opens in a second window, at `127.0.0.1`, signed in with a new ticket.
+- A capability lists each command the first window may call. The Robinauts window is in no
+  capability, so the core refuses its calls.
 
 ## The folder
 
@@ -69,7 +71,22 @@ as `~/bin`.
 
 - The app installs nothing by itself. The Checks screen shows the command for each missing
   prerequisite, and the person runs it. On Debian, that command is `apt install`.
+- The workflow `release` builds the archives on GitHub's runners. A tag `v*` attaches them to a
+  release, with their SHA-256 sums.
 - Windows comes later, with mode 3.
+
+## Tests
+
+- The unit tests cover the pure functions of the core, with rows of inputs and outputs.
+- The journey in `tests/e2e/` drives the real app and a real Docker engine through WebDriver. It
+  walks the screens from a fresh folder to its removal. It runs on Linux, by hand:
+  `tests/e2e/run.sh`.
+
+## Open
+
+- Signing and notarizing `FA1.app`, which needs an Apple Developer ID. Until then, the person
+  opens it with a right click.
+- The journey in a CI job: it needs Docker and builds every image.
 
 ## Removal
 
