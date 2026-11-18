@@ -14,6 +14,17 @@ export FA1_HOME
 # The webviews keep their storage under XDG_DATA_HOME, apart from FA1_HOME.
 XDG_DATA_HOME="$work/data"
 export XDG_DATA_HOME
+# Links the app sends to the browser go to a recorder, first on PATH: the real xdg-open finds
+# the person's desktop session over D-Bus, whatever the variables say.
+FA1_E2E_OPENED="$work/opened"
+export FA1_E2E_OPENED
+mkdir "$work/bin"
+for opener in xdg-open open; do
+    printf '#!/bin/sh\necho "$1" >> "%s"\n' "$FA1_E2E_OPENED" > "$work/bin/$opener"
+    chmod +x "$work/bin/$opener"
+done
+PATH="$work/bin:$PATH"
+export PATH
 
 Xvfb :91 -screen 0 1400x1000x24 >"$work/xvfb.log" 2>&1 &
 xvfb=$!
