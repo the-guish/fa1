@@ -142,12 +142,21 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     for item in driver.find_elements(By.CSS_SELECTOR, "#check-list li"):
         assert item.get_attribute("class") == "ok", item.text
 
-    # Keys: the token and the author. The secrets folder is the person's alone.
+    # Keys: the token, the author and the repositories. A repository off GitHub is refused, and
+    # the form says which line. The secrets folder is the person's alone.
     click(driver, "#checks button.primary")
     form = driver.find_element(By.ID, "key-form")
     form.find_element(By.NAME, "claude_code").send_keys("sk-ant-oat01-not-a-real-token")
     form.find_element(By.NAME, "git_name").send_keys("Ada Lovelace")
     form.find_element(By.NAME, "git_email").send_keys("ada@example.com")
+    repositories = form.find_element(By.NAME, "repositories")
+    repositories.send_keys("https://gitlab.com/someone/thing")
+    click(driver, "#key-form button[type=submit]")
+    WebDriverWait(driver, 10).until(lambda d: driver.find_element(By.ID, "key-error").text)
+    assert "gitlab.com/someone/thing" in driver.find_element(By.ID, "key-error").text
+    assert screen(driver, "keys").is_displayed()
+    repositories.clear()
+    repositories.send_keys("octocat/Hello-World")
     click(driver, "#key-form button[type=submit]")
     WebDriverWait(driver, 10).until(lambda d: screen(d, "run").is_displayed())
     assert (HOME / "secrets").stat().st_mode & 0o777 == 0o700
@@ -160,6 +169,12 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
+
+    # The repositories reach the code worker, which makes each conversation a worktree of them.
+    flows_dir = docker("exec", "fa1-code-1", "printenv", "ROBINAUTS_FLOWS_DIR").strip()
+    flows = docker("exec", "fa1-code-1", "cat", f"{flows_dir}/flows.toml")
+    assert "[repositories.Hello-World]" in flows, flows
+    assert 'url = "https://github.com/octocat/Hello-World"' in flows, flows
     published = docker("port", "fa1-control-1")
     assert published.strip() == "8420/tcp -> 127.0.0.1:8420"
 

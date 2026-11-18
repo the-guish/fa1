@@ -79,6 +79,14 @@
         <label>Your email, for the agents' commits <em>optional</em>
           <input type="email" name="git_email" autocomplete="off">
         </label>
+        <label>Repositories the agents work on <em>optional, one per line</em>
+          <textarea name="repositories" rows="4" spellcheck="false" autocomplete="off"
+            placeholder="owner/name&#10;https://github.com/owner/name main develop"></textarea>
+          <small class="hint">Each conversation starts with a copy of each, on a branch of its own.
+            Branches after the name are the ones a code task may start from: main without any.
+            Private repositories need the GitHub token.</small>
+        </label>
+        <p id="key-error" class="error" role="alert"></p>
         <button class="primary" type="submit">Save and continue</button>
       </form>
     </section>

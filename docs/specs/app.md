@@ -73,7 +73,9 @@ It holds:
 1. **Welcome.** The three modes, each with what it protects against.
 2. **Checks.** The prerequisites of the chosen mode, the free memory and the free disk.
    A missing prerequisite shows the exact command that installs it.
-3. **Keys.** The model providers' keys, the Claude Code token and the GitHub token.
+3. **Keys.** The model providers' keys, the Claude Code token, the GitHub token, and the
+   repositories the agents work on. A repository off GitHub is refused, and the screen names its
+   line.
 4. **Build.** The progress of each action, and its log.
 5. **Status.** Each part and its health, its log, and a button that opens Robinauts in the App
    tab.
