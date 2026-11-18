@@ -1,0 +1,23 @@
+[package]
+name = "fa1"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Runs Robinauts for one person, with the coding agents kept apart."
+publish = false
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+ureq = { version = "3.5", features = ["json"] }
+base64 = "0.23"
+getrandom = "0.4"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[profile.release]
+strip = true
+lto = true

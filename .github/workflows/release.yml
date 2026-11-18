@@ -1,0 +1,86 @@
+# The archives of docs/specs/app.md, "Distribution": one .tar.gz per platform. Every push and
+# pull request builds and tests them. A tag v* also attaches them to a GitHub release.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-15
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: WebKitGTK and GTK, to build on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev
+
+      - name: Format, lints and unit tests
+        working-directory: app
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+      - name: Linux archive
+        if: runner.os == 'Linux'
+        working-directory: app
+        run: |
+          cargo build --release --locked
+          mkdir -p dist/fa1
+          cp target/release/fa1 ../LICENSE dist/fa1/
+          tar -C dist -czf "dist/fa1-${{ matrix.platform }}.tar.gz" fa1
+
+      - name: macOS archive
+        if: runner.os == 'macOS'
+        working-directory: app
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --bundles app
+          mkdir -p dist
+          tar -C target/release/bundle/macos -czf "dist/fa1-${{ matrix.platform }}.tar.gz" FA1.app
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: fa1-${{ matrix.platform }}
+          path: app/dist/fa1-${{ matrix.platform }}.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: archive
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach the archives to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum fa1-*.tar.gz > SHA256SUMS
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" --notes "" fa1-*.tar.gz SHA256SUMS
