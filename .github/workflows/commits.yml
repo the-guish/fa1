@@ -1,0 +1,23 @@
+# AGENTS.md, "Commits and pull requests": a commit is signed off and mentions no AI.
+name: commits
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  commits:
+    name: sign-off and no AI
+    # The commits of the pull request: main's history is already published.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-commits.sh "$BASE..$HEAD"

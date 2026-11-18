@@ -29,5 +29,8 @@ as a part. A new layer, dependency or abstraction needs a reason in the specs.
 
 - A commit mentions no AI: no `Co-Authored-By` line for an AI, no session link, no "generated
   with" line. The author is the developer.
+- A commit is signed off by its author, with `git commit -s`.
+- `scripts/check-commits.sh` checks the commits of a branch for both rules. CI runs it on every
+  pull request.
 - A pull request description ends with a line holding `---`, then `Generated with <tools>`, with
   no link.
