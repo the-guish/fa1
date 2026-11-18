@@ -230,9 +230,22 @@ fn add_built(
         .map_err(|e| e.to_string())
 }
 
+/// The keys of the tabs in Robinauts' page: a navigation to `fa1:tab/<tab>`, which
+/// `link_target` takes as the switch. Robinauts' webview calls none of the app's commands.
+const TAB_KEYS: &str = r#"document.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+  const tab = { 1: "admin", 2: "app" }[event.key];
+  if (!tab) return;
+  event.preventDefault();
+  event.stopPropagation();
+  location.assign("fa1:tab/" + tab);
+}, true);"#;
+
 /// Where a link of Robinauts goes.
 #[derive(Debug, PartialEq)]
 enum LinkTarget {
+    /// `fa1:tab/admin` or `fa1:tab/app`: the keys of the tabs, a switch and no page.
+    Tab(&'static str),
     /// Robinauts' own address, on the host's loopback, at the app's port: the App tab.
     Stay,
     /// Another `http` or `https` address: the person's browser.
@@ -247,6 +260,8 @@ fn link_target(url: &tauri::Url, port: u16) -> LinkTarget {
             LinkTarget::Stay
         }
         "about" if url.path() == "blank" => LinkTarget::Stay,
+        "fa1" if url.path() == "tab/admin" => LinkTarget::Tab(ADMIN),
+        "fa1" if url.path() == "tab/app" => LinkTarget::Tab(APP),
         "http" | "https" => LinkTarget::Browser,
         _ => LinkTarget::Nowhere,
     }
@@ -270,8 +285,14 @@ fn open_in_browser(url: &tauri::Url) {
 /// The App tab's webview: Robinauts, kept on its own address. Links elsewhere go to the browser.
 fn robinauts_webview(app: &AppHandle, url: tauri::Url, port: u16) -> WebviewBuilder<tauri::Wry> {
     let handle = app.clone();
+    let switcher = app.clone();
     WebviewBuilder::new(APP, WebviewUrl::External(url))
+        .initialization_script(TAB_KEYS)
         .on_navigation(move |url| match link_target(url, port) {
+            LinkTarget::Tab(tab) => {
+                let _ = switch_to(&switcher, tab);
+                false
+            }
             LinkTarget::Stay => true,
             LinkTarget::Browser => {
                 open_in_browser(url);
@@ -287,6 +308,9 @@ fn robinauts_webview(app: &AppHandle, url: tauri::Url, port: u16) -> WebviewBuil
                     }
                 }
                 LinkTarget::Browser => open_in_browser(&url),
+                LinkTarget::Tab(tab) => {
+                    let _ = switch_to(&handle, tab);
+                }
                 LinkTarget::Nowhere => {}
             }
             tauri::webview::NewWindowResponse::Deny
@@ -445,6 +469,10 @@ mod tests {
             ("javascript:alert(1)", Nowhere),
             ("tauri://localhost/index.html", Nowhere),
             ("about:config", Nowhere),
+            ("fa1:tab/admin", Tab(ADMIN)),
+            ("fa1:tab/app", Tab(APP)),
+            ("fa1:tab/bar", Nowhere),
+            ("fa1:quit", Nowhere),
         ];
         for (url, expected) in cases {
             let parsed: tauri::Url = url.parse().unwrap();

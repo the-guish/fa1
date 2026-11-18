@@ -291,6 +291,28 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert len(driver.window_handles) == 3
     click(driver, "#tab-admin")
     WebDriverWait(driver, 10).until(lambda d: pressed("admin") == "true")
+
+    # Ctrl+2 shows App and Ctrl+1 shows Admin, from whichever tab has the keyboard. The keys are
+    # dispatched in the page: a WebDriver key action waits for a webview that hides itself.
+    def press_keys(handle: str, key: str) -> None:
+        driver.switch_to.window(handle)
+        driver.execute_script(
+            "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',"
+            " {key: arguments[0], code: 'Digit' + arguments[0], ctrlKey: true, bubbles: true}))",
+            key,
+        )
+        driver.switch_to.window(bar)
+
+    press_keys(main, "2")
+    WebDriverWait(driver, 10).until(lambda d: pressed("app") == "true")
+    press_keys(robinauts, "1")
+    WebDriverWait(driver, 10).until(lambda d: pressed("admin") == "true")
+    press_keys(bar, "2")
+    WebDriverWait(driver, 10).until(lambda d: pressed("app") == "true")
+    press_keys(robinauts, "1")
+    WebDriverWait(driver, 10).until(lambda d: pressed("admin") == "true")
+    driver.switch_to.window(robinauts)
+    assert driver.current_url.startswith("http://127.0.0.1:8420/")
     driver.switch_to.window(main)
 
     # Reset: the code worker's container and volumes go, and it joins again.

@@ -34,6 +34,9 @@ webviews:
 | `app` | Robinauts, at `127.0.0.1`, signed in with a new ticket | no |
 
 - The tabs share the space below the bar. The core shows one tab and hides the other.
+- `Ctrl+1` shows Admin and `Ctrl+2` shows App, from whichever webview has the keyboard. In the
+  `app` webview, a script the app adds turns the keys into a navigation to `fa1:tab/admin` or
+  `fa1:tab/app`, which the core takes as the switch and never loads.
 - On Linux, Tauri packs the webviews in the window's GTK box, and the box sets their places. The
   app holds the bar at the top of the box, at its own height, through the `gtk` crate, which
   Tauri already uses.
