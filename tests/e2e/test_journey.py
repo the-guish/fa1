@@ -208,6 +208,42 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     )
     assert "not allowed" in switched, switched
 
+    # Links that leave Robinauts open in the person's browser, never in the app: a new window,
+    # and a page of the same tab. Another scheme opens nowhere. The person clicks them.
+    opened = Path(os.environ["FA1_E2E_OPENED"])
+    driver.execute_script(
+        "for (const [id, href, target] of arguments[0]) {"
+        "  const a = document.createElement('a');"
+        "  a.id = id; a.href = href; a.textContent = id;"
+        "  if (target) a.target = target;"
+        "  a.style = 'position:fixed;top:0;left:0;z-index:99999;display:block;padding:4px';"
+        "  document.body.append(a);"
+        "}",
+        [
+            ["fa1-file", "file:///etc/passwd", "_blank"],
+            ["fa1-new-window", "https://example.com/fa1-new-window", "_blank"],
+            ["fa1-same-tab", "https://example.com/fa1-same-tab", ""],
+        ],
+    )
+    for link in ("fa1-file", "fa1-new-window", "fa1-same-tab"):
+        driver.execute_script(
+            "document.querySelectorAll('a[id^=fa1-]')"
+            ".forEach(a => { a.style.display = a.id === arguments[0] ? 'block' : 'none'; })",
+            link,
+        )
+        driver.find_element(By.ID, link).click()
+        time.sleep(1)
+    WebDriverWait(driver, 20).until(
+        lambda d: opened.exists() and "fa1-same-tab" in opened.read_text()
+    )
+    assert opened.read_text().split() == [
+        "https://example.com/fa1-new-window",
+        "https://example.com/fa1-same-tab",
+    ]
+    time.sleep(1)
+    assert driver.current_url.startswith("http://127.0.0.1:8420/")
+    assert len(driver.window_handles) == 3
+
     # The three webviews share one window, so the window's rectangle is the same from each.
     rects = set()
     for handle in (main, bar, robinauts):

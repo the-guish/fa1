@@ -211,14 +211,86 @@ fn lay_out(window: &Window) {
 
 /// Adds a webview to the window, in its place.
 fn add_webview(app: &AppHandle, label: &str, url: WebviewUrl) -> Result<tauri::Webview, String> {
+    add_built(app, label, WebviewBuilder::new(label, url))
+}
+
+/// Adds the webview `builder` makes to the window, in the place of `label`.
+fn add_built(
+    app: &AppHandle,
+    label: &str,
+    builder: WebviewBuilder<tauri::Wry>,
+) -> Result<tauri::Webview, String> {
     let window = app
         .get_window(WINDOW)
         .ok_or_else(|| "the app's window is gone".to_string())?;
     let size = logical_size(&window)?;
     let (position, size) = bounds(label, size.width, size.height);
     window
-        .add_child(WebviewBuilder::new(label, url), position, size)
+        .add_child(builder, position, size)
         .map_err(|e| e.to_string())
+}
+
+/// Where a link of Robinauts goes.
+#[derive(Debug, PartialEq)]
+enum LinkTarget {
+    /// Robinauts' own address, on the host's loopback, at the app's port: the App tab.
+    Stay,
+    /// Another `http` or `https` address: the person's browser.
+    Browser,
+    /// Any other scheme: nowhere.
+    Nowhere,
+}
+
+fn link_target(url: &tauri::Url, port: u16) -> LinkTarget {
+    match url.scheme() {
+        "http" if url.host_str() == Some("127.0.0.1") && url.port() == Some(port) => {
+            LinkTarget::Stay
+        }
+        "about" if url.path() == "blank" => LinkTarget::Stay,
+        "http" | "https" => LinkTarget::Browser,
+        _ => LinkTarget::Nowhere,
+    }
+}
+
+/// Opens `url` in the person's browser, on a thread of its own: the webview's handlers run on
+/// the window's thread. The action is logged like any other.
+fn open_in_browser(url: &tauri::Url) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let action = actions::Action::new("open a link in the browser", program, &[]).arg(url.as_str());
+    let logs = folder().logs();
+    std::thread::spawn(move || {
+        let _ = action.run(&logs, |_| {});
+    });
+}
+
+/// The App tab's webview: Robinauts, kept on its own address. Links elsewhere go to the browser.
+fn robinauts_webview(app: &AppHandle, url: tauri::Url, port: u16) -> WebviewBuilder<tauri::Wry> {
+    let handle = app.clone();
+    WebviewBuilder::new(APP, WebviewUrl::External(url))
+        .on_navigation(move |url| match link_target(url, port) {
+            LinkTarget::Stay => true,
+            LinkTarget::Browser => {
+                open_in_browser(url);
+                false
+            }
+            LinkTarget::Nowhere => false,
+        })
+        .on_new_window(move |url, _| {
+            match link_target(&url, port) {
+                LinkTarget::Stay => {
+                    if let Some(webview) = handle.get_webview(APP) {
+                        let _ = webview.navigate(url);
+                    }
+                }
+                LinkTarget::Browser => open_in_browser(&url),
+                LinkTarget::Nowhere => {}
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
 }
 
 /// On Linux, Tauri packs each webview in the window's vertical GTK box, where they share the
@@ -263,7 +335,7 @@ fn open_robinauts(app: AppHandle) -> Result<(), String> {
     match app.get_webview(APP) {
         Some(webview) => webview.navigate(url).map_err(|e| e.to_string())?,
         None => {
-            add_webview(&app, APP, WebviewUrl::External(url))?;
+            add_built(&app, APP, robinauts_webview(&app, url, project.port))?;
         }
     }
     switch_to(&app, APP)
@@ -355,7 +427,30 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ADMIN, APP, BAR, BAR_HEIGHT, bounds};
+    use super::{ADMIN, APP, BAR, BAR_HEIGHT, LinkTarget, bounds, link_target};
+
+    #[test]
+    fn robinauts_keeps_its_own_address_and_sends_other_web_links_to_the_browser() {
+        use LinkTarget::*;
+        let cases = [
+            ("http://127.0.0.1:8420/c/123", Stay),
+            ("http://127.0.0.1:8420/auth/ticket?t=x", Stay),
+            ("about:blank", Stay),
+            ("http://127.0.0.1:9999/", Browser),
+            ("http://localhost:8420/", Browser),
+            ("https://127.0.0.1:8420/", Browser),
+            ("https://github.com/the-guish/fa1/pull/4", Browser),
+            ("http://example.com/", Browser),
+            ("file:///etc/passwd", Nowhere),
+            ("javascript:alert(1)", Nowhere),
+            ("tauri://localhost/index.html", Nowhere),
+            ("about:config", Nowhere),
+        ];
+        for (url, expected) in cases {
+            let parsed: tauri::Url = url.parse().unwrap();
+            assert_eq!(link_target(&parsed, 8420), expected, "{url}");
+        }
+    }
 
     #[test]
     fn the_bar_takes_the_top_and_each_tab_the_rest() {

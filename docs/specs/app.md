@@ -42,6 +42,10 @@ webviews:
 - A capability lists each command the bar and the admin screens may call. The capability names
   webviews, because a window's label also grants every webview in that window.
 - The `app` webview is in no capability. The core refuses its calls.
+- The `app` webview stays on Robinauts' address. A link to another `http` or `https` address,
+  in the same tab or a new window, opens in the person's browser: the action "open a link in
+  the browser" runs `xdg-open`, or `open` on macOS, with the address alone. A link of another
+  scheme opens nowhere.
 - The webviews share one WebKit context. Robinauts and FA1's screens are different origins, so
   their cookies and storage stay apart.
 - One window with several webviews needs Tauri's `unstable` feature. The feature's API may change
