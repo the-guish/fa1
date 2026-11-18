@@ -111,3 +111,31 @@ pre {
 #check-list pre { color: var(--fg); }
 
 code { font-size: 13px; }
+
+/* The bar above the tabs, in a webview of its own, 44px high. */
+body.bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 44px;
+  padding: 0 20px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+body.bar nav { display: flex; gap: 4px; }
+body.bar nav button { margin: 0; padding: 4px 14px; }
+body.bar nav button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#bar-error {
+  color: var(--danger);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

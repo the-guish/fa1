@@ -22,12 +22,33 @@ its screens.
 
 The app also speaks HTTP to the control plane on `127.0.0.1` ([core.md](core.md)).
 
-## The two windows
+## The window
 
-- FA1's own screens are in one window. They are bundled with the app, and call the core.
-- Robinauts opens in a second window, at `127.0.0.1`, signed in with a new ticket.
-- A capability lists each command the first window may call. The Robinauts window is in no
-  capability, so the core refuses its calls.
+The app has one window, so the system's window switcher shows it once. The window holds three
+webviews:
+
+| webview | shows | calls the core |
+|---|---|---|
+| `bar` | the tabs, Admin and App, along the top | yes |
+| `admin` | FA1's own screens, bundled with the app | yes |
+| `app` | Robinauts, at `127.0.0.1`, signed in with a new ticket | no |
+
+- The tabs share the space below the bar. The core shows one tab and hides the other.
+- On Linux, Tauri packs the webviews in the window's GTK box, and the box sets their places. The
+  app holds the bar at the top of the box, at its own height, through the `gtk` crate, which
+  Tauri already uses.
+- The first switch to App opens Robinauts. "Open Robinauts" on the Status screen loads it again,
+  with a new ticket.
+- A capability lists each command the bar and the admin screens may call. The capability names
+  webviews, because a window's label also grants every webview in that window.
+- The `app` webview is in no capability. The core refuses its calls.
+- The webviews share one WebKit context. Robinauts and FA1's screens are different origins, so
+  their cookies and storage stay apart.
+- One window with several webviews needs Tauri's `unstable` feature. The feature's API may change
+  between Tauri's minor versions, so an update of Tauri runs the journey.
+
+WebKitGTK lets one WebKit context alone take WebDriver automation. A webview with its own data
+folder is out of the journey's reach, so the `app` webview keeps the shared context.
 
 ## The folder
 
@@ -54,7 +75,8 @@ It holds:
    A missing prerequisite shows the exact command that installs it.
 3. **Keys.** The model providers' keys, the Claude Code token and the GitHub token.
 4. **Build.** The progress of each action, and its log.
-5. **Status.** Each part and its health, its log, and a button that opens Robinauts.
+5. **Status.** Each part and its health, its log, and a button that opens Robinauts in the App
+   tab.
 6. **Reset the code worker.**
 7. **Update.** A new release of FA1 rebuilds the images.
 8. **Remove everything.** The list of what it deletes, then a confirmation.

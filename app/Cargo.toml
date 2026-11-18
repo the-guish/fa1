@@ -7,13 +7,18 @@ description = "Runs Robinauts for one person, with the coding agents kept apart.
 publish = false
 
 [dependencies]
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
 ureq = { version = "3.5", features = ["json"] }
 base64 = "0.23"
 getrandom = "0.4"
+
+# The bar's place in the window on Linux, where Tauri packs webviews in a GTK box
+# (docs/specs/app.md, "The window"). Tauri already depends on this version.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }

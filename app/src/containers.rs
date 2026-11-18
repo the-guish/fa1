@@ -72,6 +72,14 @@ impl Project {
         )
     }
 
+    /// The code worker reads its token as it starts, so a new token needs a new container.
+    pub fn up_code_with_new_token(&self) -> Action {
+        self.compose(
+            "start the code worker, with its new token",
+            &["up", "--detach", "--no-build", "--force-recreate", "code"],
+        )
+    }
+
     pub fn stop(&self) -> Action {
         self.compose("stop everything", &["stop"])
     }
@@ -134,10 +142,15 @@ impl Project {
                 self.port
             ),
             format!(
-                "POST http://127.0.0.1:{}/auth/services, once: the code worker's token",
+                "GET http://127.0.0.1:{}/auth/services: is the code worker's token held? If not, \
+                 DELETE the old one and POST a new one",
                 self.port
             ),
-            self.up_code().line(),
+            format!(
+                "{}, or with a new token: {}",
+                self.up_code().line(),
+                self.up_code_with_new_token().line()
+            ),
             format!(
                 "GET http://127.0.0.1:{}/health, until it answers ok",
                 self.port
@@ -197,14 +210,24 @@ impl Project {
         say("Waiting for the control plane to answer.");
         control::wait_until_up(self.port, Duration::from_secs(180))?;
         let launch = self.folder.read_secret("launch");
-        if self.folder.read_secret("worker_token").is_empty() {
-            say("Creating the code worker's token.");
-            let token = control::create_worker_token(self.port, &launch)?;
-            self.folder
-                .write_secret("worker_token", &token)
-                .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
-        }
-        self.up_code().run(&logs, &mut *say)?;
+        let held = control::service_tokens(self.port, &launch)?;
+        let saved_id = self.folder.read_secret("worker_token_id");
+        let saved = self.folder.read_secret("worker_token");
+        match token_step(&saved_id, &saved, &held) {
+            TokenStep::Keep => self.up_code().run(&logs, &mut *say)?,
+            TokenStep::Replace { revoke } => {
+                say("Creating the code worker's token.");
+                for id in revoke {
+                    control::revoke_service_token(self.port, &launch, &id)?;
+                }
+                let (id, token) = control::create_worker_token(self.port, &launch)?;
+                self.folder
+                    .write_secret("worker_token", &token)
+                    .and_then(|_| self.folder.write_secret("worker_token_id", &id))
+                    .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
+                self.up_code_with_new_token().run(&logs, &mut *say)?
+            }
+        };
         say("Waiting for the code worker to join.");
         for _ in 0..120 {
             if control::health(self.port) == "ok" {
@@ -225,6 +248,30 @@ impl Project {
         self.remove_code_volumes().run(&logs, &mut *say)?;
         self.up_code().run(&logs, &mut *say)?;
         Ok(())
+    }
+}
+
+/// What a start does about the code worker's token.
+#[derive(Debug, PartialEq)]
+pub enum TokenStep {
+    /// The control plane holds the saved token: the worker keeps it.
+    Keep,
+    /// The control plane lost the saved token, at a stop, or the folder has none. The start
+    /// revokes the worker's tokens left in the control plane, by id, and makes a new one.
+    Replace { revoke: Vec<String> },
+}
+
+/// Decides from the saved token's id and secret, and the tokens the control plane holds.
+pub fn token_step(saved_id: &str, saved: &str, held: &[control::ServiceToken]) -> TokenStep {
+    if !saved_id.is_empty() && !saved.is_empty() && held.iter().any(|t| t.id == saved_id) {
+        return TokenStep::Keep;
+    }
+    TokenStep::Replace {
+        revoke: held
+            .iter()
+            .filter(|t| t.name == control::WORKER_TOKEN_NAME)
+            .map(|t| t.id.clone())
+            .collect(),
     }
 }
 
@@ -251,7 +298,55 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::env_file;
+    use super::{TokenStep, env_file, token_step};
+    use crate::control::{ServiceToken, WORKER_TOKEN_NAME};
+
+    fn held(id: &str, name: &str) -> ServiceToken {
+        ServiceToken {
+            id: id.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_start_keeps_the_token_the_control_plane_holds_and_replaces_any_other() {
+        let worker = |id: &str| held(id, WORKER_TOKEN_NAME);
+        let other = held("o", "a-person's-script");
+        let replace = |ids: &[&str]| TokenStep::Replace {
+            revoke: ids.iter().map(|i| i.to_string()).collect(),
+        };
+        // (saved id, saved secret, held) -> step
+        let cases = [
+            // Held: the control plane kept running.
+            (
+                "a",
+                "ob_svc_a",
+                vec![worker("a"), other.clone()],
+                TokenStep::Keep,
+            ),
+            // The control plane stopped: it holds no token.
+            ("a", "ob_svc_a", vec![], replace(&[])),
+            // The first start, and a folder from before the id was saved.
+            ("", "", vec![], replace(&[])),
+            ("", "ob_svc_a", vec![worker("a")], replace(&["a"])),
+            // The secret is gone from the folder, and its token is still held.
+            ("a", "", vec![worker("a")], replace(&["a"])),
+            // Another worker token is held: it goes. Other tokens stay.
+            (
+                "a",
+                "ob_svc_a",
+                vec![worker("b"), other.clone()],
+                replace(&["b"]),
+            ),
+        ];
+        for (saved_id, saved, held, expected) in cases {
+            assert_eq!(
+                token_step(saved_id, saved, &held),
+                expected,
+                "saved {saved_id:?} {saved:?}, held {held:?}"
+            );
+        }
+    }
 
     #[test]
     fn an_env_file_leaves_out_the_variables_without_a_value() {
