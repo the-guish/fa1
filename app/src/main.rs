@@ -128,25 +128,15 @@ fn choose_setup_folder(path: String) -> Result<String, String> {
     Ok(chosen.display().to_string())
 }
 
-/// Pulls the setup folder, then starts with it: the control plane and the code worker start anew
-/// when the setup changed.
+/// Takes the approved changes and the upstream's into the setup folder, then starts with it:
+/// the control plane and the code worker start anew when the setup changed.
 #[tauri::command]
 fn refresh(app: AppHandle) -> Result<(), String> {
     let project = project();
     let keys = project.folder.keys();
     let signer = app.clone();
     in_background(app, "refresh", move |say| {
-        let chosen = project
-            .folder
-            .settings()
-            .setup_folder
-            .ok_or("no setup folder yet: choose one on the Welcome screen")?;
-        setup::pull(
-            std::path::Path::new(&chosen),
-            &keys.github,
-            &project.folder.logs(),
-            &mut *say,
-        )?;
+        project.pull_setup(&keys, &mut *say)?;
         project.start(&keys, say)?;
         sign_in_again(&signer, project.port, &project.folder.read_secret("launch"));
         Ok(())
