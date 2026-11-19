@@ -129,7 +129,144 @@ pub fn choose(folder: &Path, app_root: &Path, logs: &Path) -> Result<(), String>
         .arg(folder.to_string_lossy())
         .run(logs, |_| {})?;
     }
+    if empty {
+        // The starter is FA1's own writing, so its commit is FA1's. A changelist starts from
+        // a commit (docs/specs/review-app.md).
+        let at = folder.to_string_lossy().to_string();
+        Action::new("stage the starter", "git", &["-C", &at, "add", "--all"]).run(logs, |_| {})?;
+        Action::new(
+            "commit the starter",
+            "git",
+            &[
+                "-C",
+                &at,
+                "-c",
+                "user.name=FA1",
+                "-c",
+                "user.email=fa1@localhost",
+                "commit",
+                "--quiet",
+                "--message",
+                "The starter",
+            ],
+        )
+        .run(logs, |_| {})?;
+    }
     Ok(())
+}
+
+/// The bundle of the setup folder's HEAD, in `compose/setup/`: what the review app and the
+/// designer's working copy take as `main` (docs/specs/review-app.md, "Main").
+pub const BUNDLE: &str = "main.bundle";
+/// The commit the bundle holds, beside it. The Compose project reads it as `FA1_SETUP_HEAD`.
+pub const HEAD: &str = "head";
+
+/// Publishes the setup folder's HEAD into `into`, as a git bundle and the commit's id, and
+/// answers the id. A setup folder with no commit publishes nothing, and answers "".
+pub fn publish(
+    folder: &Path,
+    into: &Path,
+    logs: &Path,
+    say: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+    let at = folder.to_string_lossy().to_string();
+    let head = Action::new(
+        "read the setup folder's HEAD",
+        "git",
+        &[
+            "-C",
+            &at,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "HEAD^{commit}",
+        ],
+    )
+    .run(logs, |_| {})
+    .map(|printed| printed.trim().to_string())
+    .unwrap_or_default();
+    if head.is_empty() {
+        say(
+            "The setup folder has no commit yet: commit it, and the Flow designer can propose changes.",
+        );
+        let _ = fs::remove_file(into.join(BUNDLE));
+        fs::write(into.join(HEAD), "").map_err(|e| e.to_string())?;
+        return Ok(head);
+    }
+    if fs::read_to_string(into.join(HEAD)).ok().as_deref() == Some(head.as_str())
+        && into.join(BUNDLE).is_file()
+    {
+        return Ok(head);
+    }
+    // Written beside the bundle, then moved onto it: a reader sees one bundle or the other.
+    let spare = into.join("main.bundle.new");
+    Action::new(
+        "publish the setup folder's HEAD",
+        "git",
+        &["-C", &at, "bundle", "create", "--quiet"],
+    )
+    .arg(spare.to_string_lossy())
+    .arg("HEAD")
+    .run(logs, &mut *say)?;
+    fs::rename(&spare, into.join(BUNDLE)).map_err(|e| e.to_string())?;
+    fs::write(into.join(HEAD), &head).map_err(|e| e.to_string())?;
+    Ok(head)
+}
+
+/// The commit `publish` last wrote into `into`, "" for none.
+pub fn published(into: &Path) -> String {
+    fs::read_to_string(into.join(HEAD))
+        .map(|text| text.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Takes the approved changelists in `bundle`, which the review app made, into the setup
+/// folder: a fetch of the bundle's `main`, then a fast-forward. git checks each object it
+/// fetches, and refuses a setup folder that has moved elsewhere.
+pub fn apply_approved(
+    folder: &Path,
+    bundle: &Path,
+    logs: &Path,
+    say: &mut dyn FnMut(&str),
+) -> Result<(), String> {
+    let at = folder.to_string_lossy().to_string();
+    Action::new(
+        "fetch the approved changes",
+        "git",
+        &[
+            "-C",
+            &at,
+            "-c",
+            "fetch.fsckObjects=true",
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+        ],
+    )
+    .arg(bundle.to_string_lossy())
+    .arg("refs/heads/main")
+    .run(logs, &mut *say)?;
+    Action::new(
+        "apply the approved changes to the setup folder",
+        "git",
+        &["-C", &at, "merge", "--ff-only", "FETCH_HEAD"],
+    )
+    .run(logs, &mut *say)
+    .map(|_| ())
+}
+
+/// Whether the setup folder has changes of its own, not committed: the person is editing it by
+/// hand.
+pub fn has_changes(folder: &Path, logs: &Path, say: &mut dyn FnMut(&str)) -> Result<bool, String> {
+    let at = folder.to_string_lossy().to_string();
+    let changes = Action::new(
+        "look for changes in the setup folder",
+        "git",
+        &["-C", &at, "status", "--porcelain"],
+    )
+    .run(logs, &mut *say)?;
+    Ok(!changes.trim().is_empty())
 }
 
 /// Reads and checks the setup folder. The error names the file.
@@ -217,8 +354,8 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
     })
 }
 
-/// Pulls the setup folder, fast-forward only, unless it has changes of its own or no upstream
-/// branch: then it is deployed as it is. The GitHub token goes through git's credential helper,
+/// Pulls the setup folder from its upstream branch, fast-forward only. A folder with no
+/// upstream branch is deployed as it is. The GitHub token goes through git's credential helper,
 /// in a variable the log never shows.
 pub fn pull(
     folder: &Path,
@@ -227,16 +364,6 @@ pub fn pull(
     say: &mut dyn FnMut(&str),
 ) -> Result<(), String> {
     let at = folder.to_string_lossy().to_string();
-    let changes = Action::new(
-        "look for changes in the setup folder",
-        "git",
-        &["-C", &at, "status", "--porcelain"],
-    )
-    .run(logs, &mut *say)?;
-    if !changes.trim().is_empty() {
-        say("The setup folder has changes of its own: it is deployed as it is, without a pull.");
-        return Ok(());
-    }
     let upstream = Action::new(
         "look for the setup folder's upstream branch",
         "git",
@@ -303,9 +430,108 @@ fn is_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{STARTER, read};
+    use super::{BUNDLE, STARTER, apply_approved, choose, has_changes, publish, published, read};
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    /// git in `at`, as a person with a name; what it printed.
+    fn git(at: &Path, args: &[&str]) -> String {
+        let done = Command::new("git")
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            done.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        String::from_utf8_lossy(&done.stdout).trim().to_string()
+    }
+
+    /// The journey of a change on the host, on real git: a new setup folder is one commit, its
+    /// HEAD is published, and a bundle of approved changes, as the review app makes one,
+    /// fast-forwards it.
+    #[test]
+    fn a_new_setup_folder_is_committed_published_and_takes_the_approved_changes() {
+        let root =
+            std::env::temp_dir().join(format!("fa1-setup-test-publish-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (folder, logs, into) = (root.join("setup"), root.join("logs"), root.join("out"));
+        fs::create_dir_all(&logs).unwrap();
+        let mut said = Vec::new();
+        let mut say = |line: &str| said.push(line.to_string());
+
+        choose(&folder, &root.join("app"), &logs).unwrap();
+        assert_eq!(
+            git(&folder, &["log", "--format=%an: %s"]),
+            "FA1: The starter"
+        );
+        assert!(!has_changes(&folder, &logs, &mut say).unwrap());
+
+        let head = publish(&folder, &into, &logs, &mut say).unwrap();
+        assert_eq!(head, git(&folder, &["rev-parse", "HEAD"]));
+        assert_eq!(published(&into), head);
+
+        // The review app's side: main at the published HEAD, an approved commit on it, and a
+        // bundle of what the setup folder lacks.
+        let review = root.join("review");
+        fs::create_dir_all(&review).unwrap();
+        let bundle = into.join(BUNDLE);
+        git(&review, &["init", "-q", "-b", "main"]);
+        git(&review, &["fetch", "-q", bundle.to_str().unwrap(), "HEAD"]);
+        git(&review, &["checkout", "-q", "-B", "main", "FETCH_HEAD"]);
+        fs::write(review.join("agents/helper.toml"), "title = \"Helper\"\n").unwrap();
+        git(&review, &["add", "--all"]);
+        git(&review, &["commit", "-q", "-m", "A helper"]);
+        let approved = root.join("approved.bundle");
+        let lacking = format!("^{head}");
+        git(
+            &review,
+            &[
+                "bundle",
+                "create",
+                "-q",
+                approved.to_str().unwrap(),
+                "refs/heads/main",
+                &lacking,
+            ],
+        );
+        apply_approved(&folder, &approved, &logs, &mut say).unwrap();
+        assert!(folder.join("agents/helper.toml").is_file());
+        assert_eq!(
+            git(&folder, &["rev-parse", "HEAD"]),
+            git(&review, &["rev-parse", "HEAD"])
+        );
+        assert!(!has_changes(&folder, &logs, &mut say).unwrap());
+        let moved = publish(&folder, &into, &logs, &mut say).unwrap();
+        assert_ne!(moved, head);
+        assert_eq!(published(&into), moved);
+
+        // A setup folder that moved elsewhere refuses the same bundle's fast-forward.
+        git(&folder, &["reset", "-q", "--hard", &head]);
+        fs::write(folder.join("README.md"), "mine\n").unwrap();
+        assert!(has_changes(&folder, &logs, &mut say).unwrap());
+        git(&folder, &["commit", "-q", "-a", "-m", "By hand"]);
+        let refused = apply_approved(&folder, &approved, &logs, &mut say).unwrap_err();
+        assert!(refused.contains("apply the approved changes"), "{refused}");
+
+        // A setup folder with no commit publishes nothing, and says so.
+        let bare = root.join("no-commit");
+        fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "-q"]);
+        let nowhere = root.join("out-of-none");
+        assert_eq!(publish(&bare, &nowhere, &logs, &mut say).unwrap(), "");
+        assert!(!nowhere.join(BUNDLE).exists());
+        assert!(
+            said.iter().any(|line| line.contains("no commit yet")),
+            "{said:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 
     fn starter(at: &Path) {
         for (name, text) in STARTER {
@@ -338,8 +564,16 @@ mod tests {
         let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
         assert_eq!(
             toml["agents"]["flow-designer"]["engine"].as_str(),
-            Some("claude-code")
+            Some("pydantic-ai")
         );
+        // The designer's tools are tool servers of FA1's fixed part.
+        for tool in toml["agents"]["flow-designer"]["tools"].as_array().unwrap() {
+            let id = tool.as_str().unwrap();
+            assert!(
+                id == "sessions" || toml["tool_servers"].get(id).is_some(),
+                "{id}"
+            );
+        }
         assert_eq!(setup.git_name, "");
         let flows = String::from_utf8(
             setup

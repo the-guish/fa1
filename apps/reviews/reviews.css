@@ -157,6 +157,37 @@
   color: var(--link);
 }
 
+.reviews-status[data-status="rejected"] {
+  color: var(--muted);
+}
+
+.reviews-outcome {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  background-color: var(--tint);
+}
+
+.reviews-description {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.reviews-checks {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.reviews-code {
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background-color: var(--warn-bg);
+  color: var(--warn-ink);
+  font-size: 0.85em;
+}
+
 .reviews-file {
   border: 1px solid var(--line);
   border-radius: var(--radius-card);

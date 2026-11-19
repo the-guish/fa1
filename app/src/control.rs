@@ -142,6 +142,67 @@ pub fn create_worker_token(port: u16, launch: &str) -> Result<(String, String), 
     Ok((field("id")?, field("secret")?))
 }
 
+/// Whether the front listener answers now.
+pub fn is_up(port: u16) -> bool {
+    agent()
+        .get(&format!("{}/auth/session", base(port)))
+        .call()
+        .is_ok_and(|r| r.status() == 200)
+}
+
+/// The name of the app's own service token at the review app.
+pub const HOST_TOKEN_NAME: &str = "fa1-host";
+
+/// The most bytes of a bundle of approved changes: a setup folder is text.
+const MOST_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The approved changelists the setup folder lacks, as the review app's git bundle of `main`
+/// (docs/specs/review-app.md, "Applying"); `None` when it lacks none. The app asks with a
+/// service token of `reviews/host`, which it makes for this one request and ends after it.
+pub fn approved_bundle(port: u16, launch: &str) -> Result<Option<Vec<u8>>, String> {
+    for stale in service_tokens(port, launch)?
+        .iter()
+        .filter(|token| token.name == HOST_TOKEN_NAME)
+    {
+        revoke_service_token(port, launch, &stale.id)?;
+    }
+    let made = post(
+        port,
+        "/auth/services",
+        launch,
+        json!({"name": HOST_TOKEN_NAME, "role": "reviews/host"}),
+    )?;
+    let field = |name: &str| {
+        made.get(name)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("POST /auth/services answered no {name}"))
+    };
+    let (id, secret) = (field("id")?, field("secret")?);
+    let path = "/reviews/api/approved.bundle";
+    let fetched = agent()
+        .get(&format!("{}{path}", base(port)))
+        .header("authorization", &format!("Bearer {secret}"))
+        .call()
+        .map_err(|e| format!("GET {path}: {e}"))
+        .and_then(|mut response| match response.status().as_u16() {
+            204 => Ok(None),
+            200 => response
+                .body_mut()
+                .with_config()
+                .limit(MOST_BUNDLE_BYTES)
+                .read_to_vec()
+                .map(Some)
+                .map_err(|e| format!("GET {path}: {e}")),
+            status => Err(format!(
+                "GET {path} answered {status}: {}",
+                response.body_mut().read_to_string().unwrap_or_default()
+            )),
+        });
+    revoke_service_token(port, launch, &id)?;
+    fetched
+}
+
 /// The address that signs the person in, once, within a minute.
 pub fn ticket_url(port: u16, launch: &str) -> Result<String, String> {
     let made = post(port, "/auth/tickets", launch, json!({}))?;

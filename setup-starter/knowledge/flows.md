@@ -108,7 +108,14 @@ The model must be one of the agent's `models` in `agents/<agent>.toml`; add it t
 
 ## Changing a flow
 
-1. Edit the files in your clone of the setup folder, and raise the flow's `version`.
-2. Push a branch and open a pull request that says what changed and how to run it.
-3. The person merges it and presses Refresh. A refresh restarts the server: a run in progress
-   ends.
+1. Edit the files on a branch of your own, and raise the flow's `version`.
+2. Ask for the person's review, in the way your instructions name:
+   - with `validate_setup` and `submit_changelist`, when you work in the working copy at
+     `/work/setup`: the person reviews the changelist under Reviews and approves it;
+   - with a pull request that says what changed and how to run it, when you work in a clone
+     from GitHub: the person merges it there.
+3. The person presses Refresh. A refresh restarts the server: a run in progress ends.
+
+`validate_setup` reads the files and runs none: it finds a flow the server would refuse, a
+handler that is not Python or that a step names and no module has, and a changed flow whose
+version did not rise. It cannot tell whether a handler does what the flow needs.

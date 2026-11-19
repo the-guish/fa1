@@ -1,6 +1,7 @@
 // Reviews' root component, as oneberth's shell loads it (docs/specs/review-app.md, "Screens").
 // A left panel with Pending and Closed, and a main panel with a list of changelists or one
-// changelist's changes, file by file, side by side.
+// changelist: what was checked, and its changes, file by file, side by side. A submitted
+// changelist is approved or rejected here.
 import { type AppProps, detailOf, getJson, hasRole, postJson, useSession } from "@oneberth/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -10,19 +11,36 @@ import "./reviews.css";
 const API = "/reviews/api";
 const APPROVER = "reviews/approver";
 
+const HANDLERS = "flows/handlers/";
+
 type State = "pending" | "closed";
-type Status = "open" | "submitted" | "approved";
+type Status = "submitted" | "approved" | "rejected";
 
 interface Listed {
   name: string;
+  title: string;
+  branch: string;
+  commit: string;
   status: Status;
+  /** Whether the setup folder holds an approved changelist's commit. */
+  applied: boolean;
   created_at: string;
+  submitted_at: string;
+}
+
+interface Changed {
+  path: string;
+  status: "added" | "changed" | "deleted";
+  old: string | null;
+  new: string | null;
 }
 
 interface Changelist extends Listed {
-  submitted_at: string | null;
-  approved_at: string | null;
-  files: { path: string; old: string | null; new: string }[];
+  description: string;
+  /** What the checks read, one line each. */
+  summary: string[];
+  closed_at: string | null;
+  files: Changed[];
 }
 
 /** What a route of the application shows. */
@@ -35,7 +53,7 @@ function shownBy(route: string): Shown {
 }
 
 function listOf(status: Status): State {
-  return status === "approved" ? "closed" : "pending";
+  return status === "submitted" ? "pending" : "closed";
 }
 
 function when(stamp: string): string {
@@ -112,7 +130,8 @@ function ChangelistList({ state, onOpen }: { state: State; onOpen: (name: string
           <thead>
             <tr>
               <th scope="col">Name</th>
-              <th scope="col">Created</th>
+              <th scope="col">Title</th>
+              <th scope="col">Submitted</th>
               <th scope="col">Status</th>
             </tr>
           </thead>
@@ -131,7 +150,8 @@ function ChangelistList({ state, onOpen }: { state: State; onOpen: (name: string
                     {item.name}
                   </button>
                 </td>
-                <td>{when(item.created_at)}</td>
+                <td>{item.title}</td>
+                <td>{when(item.submitted_at)}</td>
                 <td>
                   <span className="reviews-status" data-status={item.status}>
                     {item.status}
@@ -150,7 +170,7 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
   const session = useSession();
   const [changelist, setChangelist] = useState<Changelist | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [approving, setApproving] = useState(false);
+  const [deciding, setDeciding] = useState(false);
 
   const load = useCallback(
     (signal?: AbortSignal) =>
@@ -171,15 +191,15 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
   }, [load]);
 
   const approver = session.session !== null && hasRole(session.session, APPROVER);
-  const approve = () => {
-    setApproving(true);
+  const decide = (decision: "approve" | "reject") => {
+    setDeciding(true);
     setError(null);
-    postJson(`${API}/approve_changelist`, { changelist_name: name })
+    postJson(`${API}/${decision}_changelist`, { changelist_name: name })
       .then(
         () => load(),
         (failure: unknown) => setError(detailOf(failure)),
       )
-      .finally(() => setApproving(false));
+      .finally(() => setDeciding(false));
   };
 
   return (
@@ -189,11 +209,11 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
           type="button"
           className="reviews-button"
           data-action="back"
-          onClick={() => onBack(changelist?.status ?? "open")}
+          onClick={() => onBack(changelist?.status ?? "submitted")}
         >
           ← Back
         </button>
-        <h1>{name}</h1>
+        <h1>{changelist?.title ?? name}</h1>
         {changelist !== null ? (
           <span className="reviews-status" data-status={changelist.status}>
             {changelist.status}
@@ -201,15 +221,26 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
         ) : null}
         <span className="reviews-grow" />
         {changelist?.status === "submitted" && approver ? (
-          <button
-            type="button"
-            className="reviews-button reviews-approve"
-            data-action="approve"
-            disabled={approving}
-            onClick={approve}
-          >
-            {approving ? "Approving…" : "Approve"}
-          </button>
+          <>
+            <button
+              type="button"
+              className="reviews-button"
+              data-action="reject"
+              disabled={deciding}
+              onClick={() => decide("reject")}
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              className="reviews-button reviews-approve"
+              data-action="approve"
+              disabled={deciding}
+              onClick={() => decide("approve")}
+            >
+              Approve
+            </button>
+          </>
         ) : null}
       </header>
       {error !== null ? (
@@ -221,11 +252,24 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
       {changelist !== null ? (
         <>
           <p className="reviews-quiet">
-            Created {when(changelist.created_at)} · {changelist.files.length}{" "}
+            {changelist.name} · branch {changelist.branch} · commit{" "}
+            <code>{changelist.commit.slice(0, 12)}</code> · submitted{" "}
+            {when(changelist.submitted_at)} · {changelist.files.length}{" "}
             {changelist.files.length === 1 ? "file" : "files"}
           </p>
+          <Outcome changelist={changelist} />
+          {changelist.description !== "" ? (
+            <p className="reviews-description">{changelist.description}</p>
+          ) : null}
+          {changelist.summary.length > 0 ? (
+            <ul className="reviews-checks" aria-label="Checked">
+              {changelist.summary.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
           {changelist.files.map((file) => (
-            <FilePanel key={file.path} path={file.path} old={file.old} next={file.new} />
+            <FilePanel key={file.path} file={file} />
           ))}
         </>
       ) : null}
@@ -233,7 +277,25 @@ function ChangelistView({ name, onBack }: { name: string; onBack: (status: Statu
   );
 }
 
-function FilePanel({ path, old, next }: { path: string; old: string | null; next: string }) {
+/** What became of a closed changelist, and what the person does next. */
+function Outcome({ changelist }: { changelist: Changelist }) {
+  if (changelist.status === "submitted") return null;
+  const text =
+    changelist.status === "rejected"
+      ? "Rejected. The submitter may submit it again under the same name."
+      : changelist.applied
+        ? "Approved, and in the setup folder."
+        : "Approved. Press Refresh on the Status screen of FA1's Admin tab to apply it: the control plane then starts anew.";
+  return (
+    <p className="reviews-outcome" data-applied={changelist.applied ? "yes" : "no"}>
+      {text}
+    </p>
+  );
+}
+
+function FilePanel({ file }: { file: Changed }) {
+  const { path, old } = file;
+  const next = file.new ?? "";
   const rows = useMemo(() => sideBySide(old, next), [old, next]);
   const added = rows.filter((row) => row.right !== null && row.kind !== "same").length;
   const removed = rows.filter((row) => row.left !== null && row.kind !== "same").length;
@@ -241,7 +303,11 @@ function FilePanel({ path, old, next }: { path: string; old: string | null; next
     <details className="reviews-file" data-path={path} open>
       <summary>
         <span className="reviews-path">{path}</span>
-        {old === null ? <span className="reviews-new">new file</span> : null}
+        {file.status === "added" ? <span className="reviews-new">new file</span> : null}
+        {file.status === "deleted" ? <span className="reviews-new">deleted</span> : null}
+        {path.startsWith(HANDLERS) ? (
+          <span className="reviews-code">code that runs in the control plane</span>
+        ) : null}
         <span className="reviews-counts">
           <span className="reviews-plus">+{added}</span>{" "}
           <span className="reviews-minus">−{removed}</span>
