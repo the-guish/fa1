@@ -2,11 +2,12 @@
 
 From a fresh folder: the welcome screen, the checks, the keys, the start, a second start while
 everything runs, a stop and a start, Robinauts signed in in the app tab of the one window, FA1's
-own application on its rail, a reset of the code worker, a stop, and the removal of
-everything. WebDriver sees each webview of the window as a window handle: the admin screens,
-the bar, and Robinauts. The
-Claude Code token is not a real one: the code worker joins the control plane with it, and no
-turn runs.
+own application on its rail, a change the designer proposes through its tool servers, the
+person's review and approval of it, a refresh that takes it to the setup folder, a reset of the
+code worker, a stop, and the removal of everything. WebDriver sees each webview of the window
+as a window handle: the admin screens, the bar, and Robinauts. The Claude Code token is not a
+real one: the code worker joins the control plane with it, and no turn runs. The Flow designer's
+turn is played without its model.
 
 Needs: Docker with Compose and Buildx, an X display (Xvfb), WebKitWebDriver, tauri-driver on
 4444, and the app built: `cargo build --manifest-path app/Cargo.toml`. tests/e2e/run.sh starts
@@ -45,6 +46,64 @@ START_SECONDS = 1800
 
 def docker(*args: str) -> str:
     return subprocess.run(["docker", *args], capture_output=True, text=True, check=True).stdout
+
+
+REVIEWED = (
+    'title = "Reviewed"\nengine = "claude-code"\nmodels = ["cc-haiku"]\nworker = "claude"\n'
+    'tools = ["sessions"]\nsystem_prompt = "You help."\n'
+)
+"""The agent the designer proposes, and the person approves."""
+
+DESIGNER = (
+    """
+import asyncio, os
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+KEY = {"authorization": "Bearer " + os.environ["FA1_SETUP_KEY"]}
+FILES = "http://setup-files:8938/mcp"
+GIT = "http://setup-git:8939/mcp"
+REVIEW = "http://127.0.0.1:8422/mcp"
+REPO = "/work/setup"
+AGENT = %r
+
+
+async def call(url, tool, **arguments):
+    async with streamablehttp_client(url, headers=KEY) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            done = await session.call_tool(tool, arguments)
+            text = " ".join(getattr(part, "text", "") for part in done.content)
+            assert not done.isError, (tool, text)
+            print(tool + ": " + text)
+            return text
+
+
+async def main():
+    branch = "proposals/reviewed"
+    await call(GIT, "git_create_branch", repo_path=REPO, branch_name=branch, base_branch="main")
+    await call(GIT, "git_checkout", repo_path=REPO, branch_name=branch)
+    await call(FILES, "write_file", path=REPO + "/agents/reviewed.toml", content=AGENT)
+    checked = await call(REVIEW, "validate_setup")
+    assert "passes its checks" in checked, checked
+    await call(GIT, "git_add", repo_path=REPO, files=["agents/reviewed.toml"])
+    await call(GIT, "git_commit", repo_path=REPO, message="Add the agent Reviewed")
+    await call(
+        REVIEW,
+        "submit_changelist",
+        name="add-reviewed",
+        branch=branch,
+        title="An agent, reviewed",
+        description="Adds the agent Reviewed.",
+    )
+
+
+asyncio.run(main())
+"""
+    % REVIEWED
+)
+"""The Flow designer's turn, without its model: the calls it makes to its three tool servers,
+from where its worker runs, with the key the control plane holds (docs/specs/review-app.md)."""
 
 
 @pytest.fixture(scope="module")
@@ -148,9 +207,10 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     ]
     click(driver, "#welcome summary")
     steps = [li.text for li in driver.find_elements(By.CSS_SELECTOR, "#plan li")]
-    assert len(steps) == 9
+    assert len(steps) == 10
     assert steps[0].startswith("read the setup folder")
-    assert steps[3].endswith(f"{HOME}/compose/compose.yaml build")
+    assert steps[3].startswith("git -C ") and "bundle create" in steps[3]
+    assert steps[4].endswith(f"{HOME}/compose/compose.yaml build")
 
     # Welcome: the setup folder. One inside the app's folder is refused; a new one gets the
     # starter, in a git repository.
@@ -174,6 +234,9 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     for name in ("fa1.toml", "models.toml", "agents/assistant.toml", "agents/claude-code.toml",
                  "knowledge", "flows/flows.toml", "README.md", ".git"):
         assert (SETUP / name).exists(), name
+    # The starter is one commit, FA1's: a changelist starts from a commit.
+    assert git(SETUP, "log", "--format=%an: %s").strip() == "FA1: The starter"
+    assert git(SETUP, "status", "--porcelain") == ""
 
     # Keys: the keys alone. The secrets folder is the person's alone.
     click(driver, "#checks button.primary")
@@ -196,6 +259,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     fa1_toml.write_text(
         '[git]\nname = "Ada Lovelace"\nemail = "ada@example.com"\n'
     )
+    git(SETUP, "commit", "-q", "-a", "-m", "My name")
 
     # Start: the setup folder, the images, the control plane, the token, the code worker.
     act(driver, "#start", "Everything is up.", START_SECONDS)
@@ -204,6 +268,14 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
+    # The setup folder's HEAD is published for the review app and the designer's working copy.
+    # The code worker holds no key of the designer's tool servers.
+    published = HOME / "compose" / "setup"
+    assert (published / "main.bundle").is_file()
+    assert (published / "head").read_text() == git(SETUP, "rev-parse", "HEAD").strip()
+    setup_key = (HOME / "secrets" / "setup_key").read_text().strip()
+    assert setup_key and setup_key not in code_env
+    assert setup_key in (HOME / "secrets" / "control.env").read_text()
 
     # Start again, while everything runs: the control plane keeps running, and the worker keeps
     # its token.
@@ -269,59 +341,49 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert finished["status"] == "succeeded", finished
     assert finished["output"] == "Hello, Ada", finished
 
-    # Reviews, FA1's own application, on the rail below neorc. A submitting system proposes a
-    # changelist through its API, behind the same sign-in, and the person approves it on its
-    # screens. The folder holds the new version, and the records sit beside the control plane's.
+    # Reviews, FA1's own application, on the rail below neorc.
     on_rail = "nav[aria-label=Applications] a[data-app]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, on_rail))
     rail = [a.get_attribute("data-app") for a in driver.find_elements(By.CSS_SELECTOR, on_rail)]
     assert rail == ["robinauts", "neorc", "reviews"]
     assert {"reviews/submitter", "reviews/approver"} <= set(session["roles"])
-    readme = "/var/lib/robinauts/folders/project-m/README.md"
-    docker(
-        "exec",
-        "fa1-control-1",
-        "sh",
-        "-c",
-        f"mkdir -p {Path(readme).parent} && printf 'Hello\\n' > {readme}",
+
+    # The Flow designer proposes a change: a branch of its working copy, a file, the checks, a
+    # commit and a changelist, through its three tool servers. Nothing reaches the setup folder.
+    played = subprocess.run(
+        ["docker", "exec", "-i", "fa1-control-1", "python", "-"],
+        input=DESIGNER,
+        capture_output=True,
+        text=True,
     )
-    for endpoint, body in [
-        ("register_folder", {"path": "project-m"}),
-        ("open_changelist", {"name": "improve-readme"}),
-        (
-            "replace_contents",
-            {
-                "changelist_name": "improve-readme",
-                "path": "project-m/README.md",
-                "new_contents": "Hello World!\n",
-            },
-        ),
-        ("submit_changelist", {"changelist_name": "improve-readme"}),
-    ]:
-        answer = driver.execute_async_script(
-            "const done = arguments[arguments.length - 1];"
-            f"fetch('/reviews/api/{endpoint}', {{method: 'POST',"
-            " headers: {'content-type': 'application/json'},"
-            f" body: JSON.stringify({json.dumps(body)})}})"
-            ".then(async r => done([r.status, await r.json()]), e => done([0, String(e)]));"
-        )
-        assert answer[0] == 200, (endpoint, answer)
+    assert played.returncode == 0, played.stdout + played.stderr
+    assert "Changelist add-reviewed is submitted" in played.stdout, played.stdout
+    assert not (SETUP / "agents" / "reviewed.toml").exists()
+
+    # The person reviews it: the changelist on the Pending list, its file side by side, what
+    # was checked, and the approval.
     press(driver, "a[data-app=reviews]")
-    pending = ".reviews-list tr[data-changelist=improve-readme]"
+    pending = ".reviews-list tr[data-changelist=add-reviewed]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, pending))
-    assert "submitted" in driver.find_element(By.CSS_SELECTOR, pending).text
+    row = driver.find_element(By.CSS_SELECTOR, pending).text
+    assert "submitted" in row and "An agent, reviewed" in row, row
     press(driver, pending)
-    panel = '.reviews-file[data-path="project-m/README.md"]'
+    panel = '.reviews-file[data-path="agents/reviewed.toml"]'
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, panel))
-    old = driver.find_element(By.CSS_SELECTOR, f"{panel} .reviews-line.old").text
-    new = driver.find_element(By.CSS_SELECTOR, f"{panel} .reviews-line.new").text
-    assert (old, new) == ("Hello", "Hello World!")
+    assert "new file" in driver.find_element(By.CSS_SELECTOR, f"{panel} summary").text
+    new = [e.text for e in driver.find_elements(By.CSS_SELECTOR, f"{panel} .reviews-line.new")]
+    assert new == REVIEWED.splitlines(), new
+    checked = driver.find_element(By.CSS_SELECTOR, ".reviews-checks").text
+    assert "4 agents" in checked, checked
     press(driver, "[data-action=approve]")
     approved = ".reviews-header .reviews-status[data-status=approved]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, approved))
-    assert docker("exec", "fa1-control-1", "cat", readme) == "Hello World!\n"
+    outcome = driver.find_element(By.CSS_SELECTOR, ".reviews-outcome")
+    assert outcome.get_attribute("data-applied") == "no" and "Refresh" in outcome.text
+    assert not (SETUP / "agents" / "reviewed.toml").exists()
     press(driver, "[data-action=back]")
-    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, pending))
+    closed_row = ".reviews-list tr[data-changelist=add-reviewed]"
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, closed_row))
     assert (
         driver.find_element(By.CSS_SELECTOR, ".reviews-entry[data-state=closed]").get_attribute(
             "aria-current"
@@ -332,11 +394,54 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "reviews.db" in data, data
     press(driver, "a[data-app=robinauts]")
 
-    # Refresh: the setup folder pulls a new agent from its remote, and Robinauts serves it.
+    def serving_again() -> list[str]:
+        """The agents Robinauts serves, once the App tab signed in again after a restart."""
+        driver.switch_to.window(robinauts)
+        WebDriverWait(driver, 60).until(
+            lambda d: d.execute_async_script(
+                "const done = arguments[arguments.length - 1];"
+                "fetch('/robinauts/api/agents').then(r => done(r.status), e => done(0));"
+            )
+            == 200
+        )
+        agents = driver.execute_async_script(
+            "const done = arguments[arguments.length - 1];"
+            "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
+        )
+        assert "items" in agents, agents
+        return sorted(a["id"] for a in agents["items"])
+
+    # Refresh: the approved change reaches the setup folder as the designer's commit, FA1
+    # deploys it, and Robinauts serves the new agent. The review app sees it applied, and the
+    # working copy's main follows.
+    driver.switch_to.window(main)
+    before = len(log_text(driver))
+    act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
+    assert "Applying the approved changes" in log_text(driver)[before:]
+    assert (SETUP / "agents" / "reviewed.toml").read_text() == REVIEWED
+    assert (
+        git(SETUP, "log", "-1", "--format=%an: %s").strip()
+        == "Flow designer: Add the agent Reviewed"
+    )
+    assert git(SETUP, "status", "--porcelain") == ""
+    assert serving_again() == ["assistant", "claude-code", "flow-designer", "reviewed"]
+    closed = driver.execute_async_script(
+        "const done = arguments[arguments.length - 1];"
+        "fetch('/reviews/api/changelists?state=closed').then(r => r.json())"
+        ".then(done, e => done(String(e)));"
+    )
+    assert [(c["name"], c["status"], c["applied"]) for c in closed["items"]] == [
+        ("add-reviewed", "approved", True)
+    ], closed
+    head = git(SETUP, "rev-parse", "HEAD").strip()
+    assert (
+        docker("exec", "fa1-setup-git-1", "git", "-C", "/work/setup", "rev-parse", "main").strip()
+        == head
+    )
+
+    # Refresh again: the setup folder pulls a new agent from its remote, and Robinauts serves it.
     remote = HOME.parent / "setup-remote.git"
     subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
-    git(SETUP, "add", "-A")
-    git(SETUP, "commit", "-q", "-m", "The starter")
     git(SETUP, "remote", "add", "origin", str(remote))
     git(SETUP, "push", "-q", "-u", "origin", "HEAD")
     other = HOME.parent / "setup-elsewhere"
@@ -349,28 +454,18 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     git(other, "commit", "-q", "-m", "A helper")
     git(other, "push", "-q")
     driver.switch_to.window(main)
+    before = len(log_text(driver))
     act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
+    assert "No approved change waits" in log_text(driver)[before:]
     assert (SETUP / "agents" / "helper.toml").exists()
     # The refresh restarted the control plane, which ended the sign-in: the App tab signs in
     # again on its own.
-    driver.switch_to.window(robinauts)
-    WebDriverWait(driver, 30).until(
-        lambda d: d.execute_async_script(
-            "const done = arguments[arguments.length - 1];"
-            "fetch('/robinauts/api/agents').then(r => done(r.status), e => done(0));"
-        )
-        == 200
-    )
-    agents = driver.execute_async_script(
-        "const done = arguments[arguments.length - 1];"
-        "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
-    )
-    assert "items" in agents, agents
-    assert sorted(a["id"] for a in agents["items"]) == [
+    assert serving_again() == [
         "assistant",
         "claude-code",
         "flow-designer",
         "helper",
+        "reviewed",
     ]
     called = driver.execute_async_script(
         "const done = arguments[arguments.length - 1];"
