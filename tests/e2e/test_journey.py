@@ -269,22 +269,65 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert finished["status"] == "succeeded", finished
     assert finished["output"] == "Hello, Ada", finished
 
-    # Reviews, FA1's own application: on the rail below neorc, with its one panel, its API
-    # behind the same sign-in, and its records beside the control plane's.
+    # Reviews, FA1's own application, on the rail below neorc. A submitting system proposes a
+    # changelist through its API, behind the same sign-in, and the person approves it on its
+    # screens. The folder holds the new version, and the records sit beside the control plane's.
     on_rail = "nav[aria-label=Applications] a[data-app]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, on_rail))
     rail = [a.get_attribute("data-app") for a in driver.find_elements(By.CSS_SELECTOR, on_rail)]
     assert rail == ["robinauts", "neorc", "reviews"]
-    press(driver, "a[data-app=reviews]")
-    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, ".reviews-panel"))
-    assert driver.find_element(By.CSS_SELECTOR, ".reviews-panel").text == "something to review"
-    reviews = driver.execute_async_script(
-        "const done = arguments[arguments.length - 1];"
-        "fetch('/reviews/api/reviews').then(async r => done([r.status, await r.json()]),"
-        " e => done([0, String(e)]));"
+    assert {"reviews/submitter", "reviews/approver"} <= set(session["roles"])
+    readme = "/var/lib/robinauts/folders/project-m/README.md"
+    docker(
+        "exec",
+        "fa1-control-1",
+        "sh",
+        "-c",
+        f"mkdir -p {Path(readme).parent} && printf 'Hello\\n' > {readme}",
     )
-    assert reviews == [200, {"items": []}], reviews
-    assert "reviews/user" in session["roles"]
+    for endpoint, body in [
+        ("register_folder", {"path": "project-m"}),
+        ("open_changelist", {"name": "improve-readme"}),
+        (
+            "replace_contents",
+            {
+                "changelist_name": "improve-readme",
+                "path": "project-m/README.md",
+                "new_contents": "Hello World!\n",
+            },
+        ),
+        ("submit_changelist", {"changelist_name": "improve-readme"}),
+    ]:
+        answer = driver.execute_async_script(
+            "const done = arguments[arguments.length - 1];"
+            f"fetch('/reviews/api/{endpoint}', {{method: 'POST',"
+            " headers: {'content-type': 'application/json'},"
+            f" body: JSON.stringify({json.dumps(body)})}})"
+            ".then(async r => done([r.status, await r.json()]), e => done([0, String(e)]));"
+        )
+        assert answer[0] == 200, (endpoint, answer)
+    press(driver, "a[data-app=reviews]")
+    pending = ".reviews-list tr[data-changelist=improve-readme]"
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, pending))
+    assert "submitted" in driver.find_element(By.CSS_SELECTOR, pending).text
+    press(driver, pending)
+    panel = '.reviews-file[data-path="project-m/README.md"]'
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, panel))
+    old = driver.find_element(By.CSS_SELECTOR, f"{panel} .reviews-line.old").text
+    new = driver.find_element(By.CSS_SELECTOR, f"{panel} .reviews-line.new").text
+    assert (old, new) == ("Hello", "Hello World!")
+    press(driver, "[data-action=approve]")
+    approved = ".reviews-header .reviews-status[data-status=approved]"
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, approved))
+    assert docker("exec", "fa1-control-1", "cat", readme) == "Hello World!\n"
+    press(driver, "[data-action=back]")
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, pending))
+    assert (
+        driver.find_element(By.CSS_SELECTOR, ".reviews-entry[data-state=closed]").get_attribute(
+            "aria-current"
+        )
+        == "page"
+    )
     data = docker("exec", "fa1-control-1", "ls", "/var/lib/robinauts/data").split()
     assert "reviews.db" in data, data
     press(driver, "a[data-app=robinauts]")

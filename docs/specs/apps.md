@@ -5,7 +5,7 @@ neorc: an icon on the rail of the App tab, and an API of its own on the control 
 
 | application | shows | keeps |
 |---|---|---|
-| `reviews` | one panel, a placeholder: "something to review" | `reviews.db`: one table, empty |
+| `reviews` | the changelists to review, and each one's changes side by side ([review-app.md](review-app.md)) | `reviews.db`, and the changelists' copies in `reviews/` |
 
 ## FA1 is the host
 
@@ -99,6 +99,8 @@ and `undici-types`.
   a file that holds tables and no version.
 - A refusal is an error of the application's own. oneberth ends the start with the
   application's name and its sentence.
+- The review app's starting folder is `folders/`, beside `data/` in the volume `control-data`.
+  `REVIEWS_ROOT` names it.
 
 ## What an application may use
 
@@ -128,6 +130,9 @@ and `undici-types`.
   process. CI runs the script on every pull request.
 - The journey finds Reviews on the rail below neorc, opens it, reads its panel, asks its API,
   and finds `reviews.db` in the data directory.
+- The journey finds Reviews on the rail below neorc. It proposes a changelist through the API,
+  opens it on the Pending list, reads its change side by side, and approves it. The folder then
+  holds the new version, and the data directory holds `reviews.db`.
 
 ## Open
 
@@ -137,3 +142,4 @@ and `undici-types`.
 - Applications the person chooses, in the setup folder.
 - Mode 3. The control VM's recipe builds this image.
 - One application reading another's records.
+- A way for the person's own folders and the agents to reach the review app's starting folder.
