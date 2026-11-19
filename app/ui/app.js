@@ -59,6 +59,7 @@ async function load() {
   const form = $("#key-form");
   form.git_name.value = state.git_name;
   form.git_email.value = state.git_email;
+  form.repositories.value = state.repositories;
   const plan = $("#plan");
   plan.textContent = "";
   for (const step of await invoke("plan")) {
@@ -81,13 +82,14 @@ $("#key-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const keys = Object.fromEntries(new FormData(form));
+  $("#key-error").textContent = "";
   try {
     await invoke("save_keys", { keys });
     for (const field of ["claude_code", "anthropic", "github"]) form[field].value = "";
     await load();
     show("run");
   } catch (error) {
-    alert(error);
+    $("#key-error").textContent = `${error}`;
   }
 });
 

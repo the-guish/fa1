@@ -51,6 +51,9 @@ Each service keeps its data in a named volume of the project:
 - A volume mounted on a folder of the image takes the folder's owner. Each service writes its
   volume as the image's own user.
 - No service mounts a host folder or the Docker socket.
+- `code` mounts one file of `compose/`, read-only: `flows.toml` at `/etc/fa1/flows/flows.toml`.
+  `ROBINAUTS_FLOWS_DIR` names its folder. The app writes the file at each start, and a change
+  recreates `code`, since the worker reads it as it starts.
 
 ## Secrets
 

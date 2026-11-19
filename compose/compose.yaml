@@ -58,6 +58,9 @@ services:
       ONEBERTH_TOKEN_FILE: /run/secrets/worker_token
       ROBINAUTS_CLAUDE_AUTH: personal
       ROBINAUTS_CLAUDE_PERMISSION_MODE: bypassPermissions
+      # The repositories each conversation gets a worktree of: [repositories] of flows.toml,
+      # which the app writes at each start.
+      ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
       # git sends GITHUB_TOKEN to github.com when the agent's git asks for a password.
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: credential.https://github.com.helper
@@ -66,6 +69,7 @@ services:
     secrets: [worker_token]
     volumes:
       - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - ./flows.toml:/etc/fa1/flows/flows.toml:ro
       - code-claude:/var/lib/claude
       - code-workspaces:/workspace
     restart: unless-stopped

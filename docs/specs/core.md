@@ -67,6 +67,15 @@ The app reaches the control plane the same way in every mode:
 - The model providers' keys go to the control plane.
 - The Claude Code token and the GitHub token go to the code worker.
 
+## Repositories
+
+- The person lists the GitHub repositories the agents work on, one per line: `owner/name`, or
+  its URL, then the branches a code task may start from. `main` is the branch without a list.
+- The app writes them to `flows.toml`, the flows' settings Robinauts reads. The code worker
+  reads the file at its start.
+- Each conversation gets a worktree of each repository at its first turn, on the branch
+  `rb/<session id>`. Without repositories, a conversation's directory starts empty.
+
 ## Builds
 
 - FA1 builds every image on the person's host, from source. FA1 publishes no image.

@@ -72,10 +72,11 @@ impl Project {
         )
     }
 
-    /// The code worker reads its token as it starts, so a new token needs a new container.
-    pub fn up_code_with_new_token(&self) -> Action {
+    /// The code worker reads its token and its repositories as it starts, so a change to either
+    /// needs a new container.
+    pub fn up_code_anew(&self) -> Action {
         self.compose(
-            "start the code worker, with its new token",
+            "start the code worker anew, with its new token or repositories",
             &["up", "--detach", "--no-build", "--force-recreate", "code"],
         )
     }
@@ -147,9 +148,9 @@ impl Project {
                 self.port
             ),
             format!(
-                "{}, or with a new token: {}",
+                "{}, or with a new token or new repositories: {}",
                 self.up_code().line(),
-                self.up_code_with_new_token().line()
+                self.up_code_anew().line()
             ),
             format!(
                 "GET http://127.0.0.1:{}/health, until it answers ok",
@@ -158,8 +159,9 @@ impl Project {
         ]
     }
 
-    /// Writes the project's files and the secrets the start needs.
-    pub fn write(&self, keys: &Keys) -> std::io::Result<()> {
+    /// Writes the project's files and the secrets the start needs. The answer says whether
+    /// `flows.toml`, the repositories, changed.
+    pub fn write(&self, keys: &Keys) -> std::io::Result<bool> {
         self.folder.ensure()?;
         let root = self.folder.compose();
         for (name, text) in FILES {
@@ -196,13 +198,19 @@ impl Project {
         if self.folder.read_secret("worker_token").is_empty() {
             self.folder.write_secret("worker_token", "")?;
         }
-        Ok(())
+        // Always written: Docker makes a folder of a missing file it mounts.
+        let flows = flows_toml(&keys.repositories).map_err(std::io::Error::other)?;
+        let path = root.join("flows.toml");
+        let changed = fs::read_to_string(&path).ok().as_deref() != Some(flows.as_str());
+        folder::write_file(&path, &flows, 0o644)?;
+        Ok(changed)
     }
 
     /// The whole start: the files, the images, the control plane, the token, the code worker.
     pub fn start(&self, keys: &Keys, say: &mut dyn FnMut(&str)) -> Result<(), String> {
         let logs = self.folder.logs();
-        self.write(keys)
+        let repositories_changed = self
+            .write(keys)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
         say("Building the images. The first build takes several minutes.");
         self.build().run(&logs, &mut *say)?;
@@ -213,8 +221,8 @@ impl Project {
         let held = control::service_tokens(self.port, &launch)?;
         let saved_id = self.folder.read_secret("worker_token_id");
         let saved = self.folder.read_secret("worker_token");
-        match token_step(&saved_id, &saved, &held) {
-            TokenStep::Keep => self.up_code().run(&logs, &mut *say)?,
+        let new_token = match token_step(&saved_id, &saved, &held) {
+            TokenStep::Keep => false,
             TokenStep::Replace { revoke } => {
                 say("Creating the code worker's token.");
                 for id in revoke {
@@ -225,9 +233,14 @@ impl Project {
                     .write_secret("worker_token", &token)
                     .and_then(|_| self.folder.write_secret("worker_token_id", &id))
                     .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
-                self.up_code_with_new_token().run(&logs, &mut *say)?
+                true
             }
         };
+        if new_token || repositories_changed {
+            self.up_code_anew().run(&logs, &mut *say)?;
+        } else {
+            self.up_code().run(&logs, &mut *say)?;
+        }
         say("Waiting for the code worker to join.");
         for _ in 0..120 {
             if control::health(self.port) == "ok" {
@@ -275,6 +288,82 @@ pub fn token_step(saved_id: &str, saved: &str, held: &[control::ServiceToken]) -
     }
 }
 
+/// `flows.toml` for the repositories the person typed: one per line, `owner/name` or
+/// `https://github.com/owner/name`, then the branches a code task may start from, `main` without
+/// any. Blank lines and lines from `#` are left out. The error names the line and what is wrong.
+pub fn flows_toml(typed: &str) -> Result<String, String> {
+    let mut repositories = toml::Table::new();
+    for (number, line) in typed.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        let source = words.next().unwrap_or_default();
+        let (owner, name) = github_repository(source)
+            .ok_or_else(|| format!("line {}: {source} is not a repository on GitHub: write owner/name, or https://github.com/owner/name", number + 1))?;
+        if repositories.contains_key(&name) {
+            return Err(format!(
+                "line {}: a second repository named {name}: the agents' folders are named after it",
+                number + 1
+            ));
+        }
+        let mut branches: Vec<String> = words.map(str::to_string).collect();
+        if let Some(bad) = branches.iter().find(|b| !is_branch_name(b)) {
+            return Err(format!("line {}: {bad} is not a branch name", number + 1));
+        }
+        if branches.is_empty() {
+            branches.push("main".to_string());
+        }
+        let mut table = toml::Table::new();
+        table.insert(
+            "url".to_string(),
+            format!("https://github.com/{owner}/{name}").into(),
+        );
+        table.insert("branches".to_string(), branches.into());
+        repositories.insert(name, table.into());
+    }
+    let mut settings = toml::Table::new();
+    if !repositories.is_empty() {
+        settings.insert("repositories".to_string(), repositories.into());
+    }
+    let body = toml::to_string(&settings).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "# Written by FA1 at each start, from the repositories of its Keys screen.\n{body}"
+    ))
+}
+
+/// The owner and name of a repository on GitHub: `owner/name`, or its https URL, with or without
+/// `.git`. `None` for another host, credentials, or a path that is not a repository's.
+fn github_repository(source: &str) -> Option<(String, String)> {
+    let path = match source.strip_prefix("https://github.com/") {
+        Some(path) => path.trim_end_matches('/'),
+        None if source.contains("://") || source.contains('@') => return None,
+        None => source,
+    };
+    let (owner, name) = path.split_once('/')?;
+    let name = name.strip_suffix(".git").unwrap_or(name);
+    let owner_ok =
+        !owner.is_empty() && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let name_ok = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (owner_ok && name_ok).then(|| (owner.to_string(), name.to_string()))
+}
+
+/// A branch name git takes and Robinauts accepts: no `@`, no spaces, no quotes or backslashes.
+fn is_branch_name(branch: &str) -> bool {
+    !branch.is_empty()
+        && !branch.starts_with('-')
+        && !branch.contains("..")
+        && branch
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+}
+
 /// `NAME=value` lines, as `docker compose` reads them, without quotes. A variable with no value
 /// is left out: the code worker refuses an empty `GITHUB_TOKEN`.
 fn env_file(pairs: &[(&str, &str)]) -> String {
@@ -298,7 +387,50 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::{TokenStep, env_file, token_step};
+    use super::{TokenStep, env_file, flows_toml, token_step};
+
+    #[test]
+    fn the_repositories_typed_become_flows_toml() {
+        let header = "# Written by FA1 at each start, from the repositories of its Keys screen.\n";
+        // typed -> the TOML after the header
+        let accepted = [
+            ("", ""),
+            ("\n  \n# a note\n", ""),
+            (
+                "octocat/Hello-World",
+                "[repositories.Hello-World]\nbranches = [\"main\"]\nurl = \"https://github.com/octocat/Hello-World\"\n",
+            ),
+            (
+                "https://github.com/the-guish/fa1.git/ main release/1.x",
+                "[repositories.fa1]\nbranches = [\"main\", \"release/1.x\"]\nurl = \"https://github.com/the-guish/fa1\"\n",
+            ),
+        ];
+        for (typed, expected) in accepted {
+            assert_eq!(
+                flows_toml(typed),
+                Ok(format!("{header}{expected}")),
+                "{typed:?}"
+            );
+        }
+        // typed -> words the error holds
+        let refused = [
+            (
+                "https://gitlab.com/someone/thing",
+                "line 1: https://gitlab.com/someone/thing",
+            ),
+            ("ok/one\nhttps://x:secret@github.com/a/b", "line 2:"),
+            ("owner", "line 1: owner is not a repository"),
+            ("a/b/c", "line 1: a/b/c"),
+            ("a/..", "line 1: a/.."),
+            ("a/same\nb/same", "line 2: a second repository named same"),
+            ("a/b main@x", "line 1: main@x is not a branch name"),
+            ("a/b -rf", "line 1: -rf is not a branch name"),
+        ];
+        for (typed, words) in refused {
+            let error = flows_toml(typed).expect_err(typed);
+            assert!(error.contains(words), "{typed:?}: {error}");
+        }
+    }
     use crate::control::{ServiceToken, WORKER_TOKEN_NAME};
 
     fn held(id: &str, name: &str) -> ServiceToken {

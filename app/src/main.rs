@@ -53,6 +53,7 @@ struct State {
     given: serde_json::Value,
     git_name: String,
     git_email: String,
+    repositories: String,
 }
 
 #[tauri::command]
@@ -71,6 +72,7 @@ fn state() -> State {
         }),
         git_name: keys.git_name,
         git_email: keys.git_email,
+        repositories: keys.repositories,
     }
 }
 
@@ -86,7 +88,8 @@ fn checks() -> Result<Vec<checks::Check>, String> {
     Ok(checks::containers(&folder.logs()))
 }
 
-/// Saves the mode and the keys. An empty key keeps the one saved before.
+/// Saves the mode, the keys and the repositories. An empty key keeps the one saved before. A
+/// repository the code worker would refuse is refused here, with its line.
 #[tauri::command]
 fn save_keys(keys: Keys) -> Result<(), String> {
     let folder = folder();
@@ -103,6 +106,8 @@ fn save_keys(keys: Keys) -> Result<(), String> {
     }
     saved.git_name = keys.git_name.trim().to_string();
     saved.git_email = keys.git_email.trim().to_string();
+    containers::flows_toml(&keys.repositories)?;
+    saved.repositories = keys.repositories.trim().to_string();
     folder.save_keys(&saved).map_err(|e| e.to_string())?;
     let mut settings = folder.settings();
     settings.mode = Some("containers".to_string());

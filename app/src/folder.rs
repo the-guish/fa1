@@ -51,6 +51,9 @@ pub struct Keys {
     pub git_name: String,
     #[serde(default)]
     pub git_email: String,
+    /// The repositories the agents work on, as the person typed them: one per line.
+    #[serde(default)]
+    pub repositories: String,
 }
 
 impl Folder {
