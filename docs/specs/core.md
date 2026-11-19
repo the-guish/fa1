@@ -49,13 +49,14 @@ has a kernel of its own, so mode 3 is the security boundary.
 The app reaches the control plane the same way in every mode:
 
 - Robinauts' front listener is on `127.0.0.1` on the host, at the port the app chose. The app's
-  window opens Robinauts there.
+  App tab opens Robinauts there.
 - The app makes the launch secret at the first start, and keeps it. The control plane reads it
   at each start.
-- The app asks for a ticket with the launch secret (`POST /auth/tickets`). It opens the window
+- The app asks for a ticket with the launch secret (`POST /auth/tickets`). It opens the App tab
   with that ticket.
-- The app creates the code worker's token with the launch secret (`/auth/services`), once. The
-  token is bound to the worker `claude`.
+- The app creates the code worker's token with the launch secret (`/auth/services`). The token
+  is bound to the worker `claude`. The control plane keeps it in memory, so each start checks it
+  ([containers.md](containers.md), "Starting").
 - The app starts, stops and reads logs through the mode's own tool: Docker Compose in mode 2,
   QEMU in mode 3.
 
