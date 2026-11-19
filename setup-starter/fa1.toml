@@ -1,0 +1,6 @@
+# FA1's settings. The keys are not here: FA1 keeps them in its own folder.
+
+# The author of the agents' commits.
+[git]
+name = ""
+email = ""

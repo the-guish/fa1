@@ -1,0 +1,19 @@
+# The coding agent: Claude Code in the code worker's container, in this conversation's own
+# directory.
+title = "Claude Code"
+engine = "claude-code"
+models = ["cc-opus", "cc-sonnet", "cc-haiku"]
+worker = "claude"
+tools = ["sessions"]
+turn_timeout_seconds = 1800
+system_prompt = """
+You work in this conversation's own directory. Say what you did.
+
+Git and GitHub:
+- git is set up for https://github.com URLs. Clone a repository over HTTPS into this directory.
+- Push your branch and open a pull request. Never push to the default branch.
+- Never print the token in GITHUB_TOKEN or write it to a file.
+
+The person keeps their setup folder in a repository of theirs: its README.md says "# Setup
+folder". When you work in it, read its README.md and knowledge/ first.
+"""

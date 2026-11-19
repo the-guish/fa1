@@ -19,6 +19,8 @@ pub struct Action {
     /// Variables set for the program, beside the app's own. Their values are shown: none is a
     /// secret.
     pub env: Vec<(String, String)>,
+    /// Secret variables: the log shows their names, never their values.
+    pub secret_env: Vec<(String, String)>,
 }
 
 impl Action {
@@ -28,6 +30,7 @@ impl Action {
             program: program.to_string(),
             args: args.iter().map(|a| a.to_string()).collect(),
             env: Vec::new(),
+            secret_env: Vec::new(),
         }
     }
 
@@ -41,12 +44,19 @@ impl Action {
         self
     }
 
+    /// A secret variable for the program. The log shows `NAME=***`.
+    pub fn secret_env(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.secret_env.push((name.to_string(), value.into()));
+        self
+    }
+
     /// The action as one line: the variables, the program and its arguments.
     pub fn line(&self) -> String {
         let mut parts: Vec<String> = self
             .env
             .iter()
             .map(|(k, v)| format!("{k}={}", quoted(v)))
+            .chain(self.secret_env.iter().map(|(k, _)| format!("{k}=***")))
             .collect();
         parts.push(self.program.clone());
         parts.extend(self.args.iter().map(|a| quoted(a)));
@@ -64,6 +74,11 @@ impl Action {
         let mut child = Command::new(program_path(&self.program))
             .args(&self.args)
             .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .envs(
+                self.secret_env
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str())),
+            )
             .env("PATH", search_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

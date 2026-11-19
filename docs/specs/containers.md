@@ -51,6 +51,9 @@ Each service keeps its data in a named volume of the project:
 - A volume mounted on a folder of the image takes the folder's owner. Each service writes its
   volume as the image's own user.
 - No service mounts a host folder or the Docker socket.
+- `control` and `code` mount `robinauts.toml` of `compose/`, read-only. The app writes it from the
+  setup folder at each start ([setup-folder.md](setup-folder.md)). A change recreates `control`
+  and `code`, since both read it as they start.
 
 ## Secrets
 
