@@ -55,7 +55,8 @@ You review the pull request you are given. Say "ready" or "not ready", and why.
 - A model's provider is one FA1 names: `anthropic` (the API key) or `claude-code` (the Claude
   Code token).
 - An agent's tools are the tool servers FA1 runs: `fetch`, `browser`, `files`, `todo`,
-  `diagrams`, and Robinauts' own `sessions`.
+  `diagrams`, the designer's `setup-files`, `setup-git` and `setup-review`, and Robinauts' own
+  `sessions`.
 
 ### `knowledge/`
 
@@ -70,6 +71,8 @@ them in their clone of the setup folder (below). An agent's instructions may poi
   models (Haiku, Sonnet and Opus), the agents Assistant, Claude Code and Flow designer, a
   knowledge page on flows, Robinauts' example flow and handlers, and a README. FA1 runs
   `git init` in it when it is not a repository.
+- FA1 commits the starter it writes, as FA1. A changelist starts from a commit
+  ([review-app.md](review-app.md), "Main").
 - A folder with other files and no `fa1.toml` is refused.
 - The app keeps the location in `settings.toml`, in its own folder. The Status screen shows it,
   and the person may change it there, after moving the folder.
@@ -84,16 +87,23 @@ FA1 reads the setup folder at each start and at each refresh:
    line, and keeps what runs.
 2. FA1 writes Robinauts' configuration (`robinauts.toml`) in `compose/`: FA1's fixed part,
    `compose/robinauts.base.toml`, then the folder's models and agents.
-3. When it changed, `control` and `code` start anew: both read it as they start.
+3. FA1 publishes the folder's HEAD in `compose/`, as a git bundle. The review app and the
+   designer's working copy take it as `main` ([review-app.md](review-app.md)).
+4. When the setup changed, `control` and `code` start anew: both read it as they start.
 
 The folder's `flows/` is deployed with the flows ([flows.md](flows.md)).
 
-**Refresh** is a button on the Status screen: it pulls the setup folder, then deploys it.
+**Refresh** is a button on the Status screen: it takes the approved changes into the setup
+folder, pulls it, then deploys it.
 
+- The approved changes are the changelists the person approved under Reviews. FA1 fetches them
+  from the review app as a git bundle, and fast-forwards the folder
+  ([review-app.md](review-app.md), "Applying").
+- A stopped control plane gives no approved change. The refresh says so, and goes on.
 - The pull is `git pull --ff-only` on the folder's current branch, with the GitHub token when the
   remote is on GitHub. The token goes through git's credential helper and never into the log.
-- A folder with uncommitted changes is deployed as it is, without a pull: the person is editing
-  it by hand.
+- A folder with uncommitted changes is deployed as it is, without the approved changes and
+  without a pull: the person is editing it by hand.
 - A pull that cannot fast-forward stops the refresh, and says so.
 - A refresh restarts `control` and `code` when the setup changed. A turn that runs then ends.
 - A restart of `control` ends the App tab's sign-in. After every start and refresh, an open App
@@ -101,18 +111,30 @@ The folder's `flows/` is deployed with the flows ([flows.md](flows.md)).
 
 ## Changing it through the agents
 
-The coding agents reach GitHub with the person's token, so they can change the setup folder the
-way they change any repository:
+An agent changes the setup folder in two ways. Each ends with the person's own yes, then
+Refresh.
 
-1. The person asks an agent for a change: a new agent, a flow, a page of knowledge, and names
-   the setup folder's repository.
+**On this computer**, through the Flow designer and the review app
+([review-app.md](review-app.md)):
+
+1. The person asks the Flow designer for a change: a new agent, a flow, a page of knowledge.
+2. The designer writes the files on a branch of its working copy, checks them, and submits the
+   branch as a changelist.
+3. The person reads the changelist under Reviews, and approves it.
+4. The person presses Refresh.
+
+**On GitHub**, through a coding agent, which reaches GitHub with the person's token:
+
+1. The person asks the agent Claude Code for a change, and names the setup folder's
+   repository.
 2. The agent clones it in its conversation's directory, writes the files on a branch of its
    own, pushes the branch and opens a pull request.
 3. The person reviews and merges the pull request on GitHub.
 4. The person presses Refresh.
 
-A setup folder with no GitHub remote works the same way without steps 2 and 3: the person edits
-the files, and Refresh deploys them.
+- A setup folder takes its changes one way at a time. A pull that cannot fast-forward after an
+  approved change stops the refresh, and says so.
+- The person may also edit the files by hand. Refresh deploys them as they are.
 
 ## Open
 

@@ -5,7 +5,7 @@ neorc: an icon on the rail of the App tab, and an API of its own on the control 
 
 | application | shows | keeps |
 |---|---|---|
-| `reviews` | the changelists to review, and each one's changes side by side ([review-app.md](review-app.md)) | `reviews.db`, and the changelists' copies in `reviews/` |
+| `reviews` | the changelists to review, and each one's changes side by side ([review-app.md](review-app.md)) | `reviews.db`, and the changelists' commits in `reviews/setup.git` |
 
 ## FA1 is the host
 
@@ -34,6 +34,9 @@ apps/
     <name>/
         backend.py               the API: a oneberth component, and the records
         index.tsx                the name, the title, the icon, the loader of the root component
+    reviews/
+        checks.py                the checks of a setup folder, a program of its own
+        tools.py                 the designer's two tools, an MCP server
     Dockerfile                   the image of `control`
     package.json, package-lock.json, vite.config.ts, tsconfig.json, index.html
                                  the interface's build
@@ -86,8 +89,11 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
   with the control plane's.
 - Robinauts checks its own file at each start, and pins its schema. `robinauts.db` holds
   Robinauts' tables alone.
-- The review app's starting folder is `folders/`, beside `data/` in the volume `control-data`.
-  `REVIEWS_ROOT` names it.
+- The review app keeps a git repository beside its file: `reviews/setup.git`, with `main` and
+  each changelist's commit.
+- The review app reads two paths of the environment. `REVIEWS_WORK` names the designer's
+  working copy, and `REVIEWS_PUBLISHED` the bundle of the setup folder's HEAD
+  ([review-app.md](review-app.md), "The parts").
 
 ## What an application may use
 
@@ -95,9 +101,17 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
   TypeScript settings.
 - The API imports the standard library, FastAPI and oneberth. The control image holds all
   three.
+- A tool server of an application imports the MCP SDK and uvicorn, which Robinauts brings to the
+  control image. It listens on the loopback address of `control`, and asks for a key.
+- A program an application runs beside itself may import Robinauts and neorc. The review app's
+  checks are one: they call the functions Robinauts' start runs.
+- The control image holds git, which uv builds neorc and oneberth with. The review app runs it
+  on its own repository.
 - A stylesheet is plain CSS over oneberth's tokens. Its class names start with the
   application's name.
 - The local user holds every role a person may hold. An application declares one such role.
+- The app on the host reaches an application with a service token. The launch secret makes it,
+  for a role the application declares for it.
 
 ## Adding one
 
@@ -110,9 +124,12 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
 ## Tests
 
 - The unit tests compare the files the app writes with `apps/`.
-- The journey finds Reviews on the rail below neorc. It proposes a changelist through the API,
-  opens it on the Pending list, reads its change side by side, and approves it. The folder then
-  holds the new version, and the data directory holds `reviews.db`.
+- `tests/apps/` holds an application's own tests, which run without Docker. The review app's
+  run on real git: a setup folder, its bundle, a working copy and the review app's repository.
+  `tests/apps/run.sh` runs them in Robinauts' environment, from a checkout at the pinned commit.
+- The journey finds Reviews on the rail below neorc. It plays the designer through the three
+  tool servers, opens the changelist on the Pending list, reads its change side by side, and
+  approves it. A Refresh then takes the change to the setup folder, and Robinauts serves it.
 
 ## Open
 
@@ -123,4 +140,3 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
 - Applications the person chooses, in the setup folder.
 - Mode 3. The control VM's recipe builds this image.
 - One application reading another's records.
-- A way for the person's own folders and the agents to reach the review app's starting folder.

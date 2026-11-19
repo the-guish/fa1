@@ -15,6 +15,7 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 | `code` | the Claude Code worker's `Dockerfile`, at the same commit | the coding agents |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
+| `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
 - The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.
@@ -46,10 +47,11 @@ Each service keeps its data in a named volume of the project:
 
 | volume | service | mounted at | holds |
 |---|---|---|---|
-| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db`; `folders/`: the review app's starting folder |
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db`; `data/reviews/setup.git`: the review app's repository |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |
+| `setup-work` | `setup-files`, `setup-git`; `control`, read-only | `/work` | `setup/`: the designer's working copy of the setup folder |
 | `todos` | `todo` | `/data` | the to-do list |
 
 - A volume mounted on a folder of the image takes the folder's owner. Each service writes its
@@ -61,6 +63,13 @@ Each service keeps its data in a named volume of the project:
 - `control` mounts one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`, which
   `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup folder's
   `flows/` at each start. A change recreates `control`.
+- `control` and `setup-git` mount `setup/` of `compose/`, read-only, at `/etc/fa1/setup`. The
+  app writes the setup folder's HEAD there at each start, as the git bundle `main.bundle`
+  ([review-app.md](review-app.md), "Main").
+- `setup-git` starts anew when that HEAD changes. Compose reads the HEAD's commit in
+  `FA1_SETUP_HEAD`, which is a variable of the service.
+- The volume `setup-work` takes its owner from the tool servers' image. `control` starts after
+  `setup-git`, and reads the volume as another user.
 
 ## Secrets
 
@@ -71,9 +80,10 @@ alone, and its files by every user, so the containers' users read them.
 |---|---|---|
 | `launch` | `control` | standard input, from `/run/secrets/launch` |
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
-| `control.env` | `control` | variables: the Anthropic API key, the files server's key |
+| `control.env` | `control` | variables: the Anthropic API key, the files server's key, the key of the designer's tool servers |
 | `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author |
 | `files.env` | `files` | variables: the files server's key |
+| `setup.env` | `setup-files`, `setup-git` | variables: the key of the designer's tool servers |
 
 - Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
 - The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
@@ -81,7 +91,8 @@ alone, and its files by every user, so the containers' users read them.
 
 ## Starting
 
-1. The app writes the secrets files. `worker_token` starts empty.
+1. The app writes the secrets files. `worker_token` starts empty. It publishes the setup
+   folder's HEAD: `git bundle create` in the setup folder.
 2. `docker compose up` for `control` and the MCP servers. The app waits for `/auth/session`.
 3. The app lists the service tokens with `GET /auth/services`. A listed id equal to
    `worker_token_id` keeps the worker's token. Otherwise the app makes a new one, as below.
