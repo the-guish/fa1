@@ -51,6 +51,10 @@ const APPS: &[(&str, &str)] = &[
         include_str!("../../apps/reviews/ReviewsApp.tsx"),
     ),
     (
+        "reviews/diff.ts",
+        include_str!("../../apps/reviews/diff.ts"),
+    ),
+    (
         "reviews/backend.py",
         include_str!("../../apps/reviews/backend.py"),
     ),
