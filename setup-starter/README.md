@@ -12,5 +12,9 @@ pulls it and deploys it. Keys are never here: FA1 keeps them in its own folder.
 | `knowledge/` | Markdown the agents read: how I work, my projects, my conventions |
 | `flows/` | reusable flows: neorc YAML, their handlers, `flows.toml` |
 
-Agents change this folder through pull requests: they clone this repository, push a branch and
-open a PR. I merge it on GitHub, then press Refresh.
+Agents change this folder in two ways, and neither changes it without me:
+
+- **Here, on this computer.** The agent Flow designer writes its change on a branch of a working
+  copy, and asks for my review. I read it under Reviews, approve it, then press Refresh.
+- **On GitHub.** The agent Claude Code clones this repository, pushes a branch and opens a pull
+  request. I merge it on GitHub, then press Refresh.

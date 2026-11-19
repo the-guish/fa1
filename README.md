@@ -33,4 +33,5 @@ folder. Then delete the unpacked archive.
 - `cargo run --manifest-path app/Cargo.toml` runs the app. On Linux it needs WebKitGTK 4.1 and
   GTK 3 with their headers: `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev`.
 - `cargo test --manifest-path app/Cargo.toml` runs the unit tests.
+- `tests/apps/run.sh <a checkout of Robinauts>` runs the review app's tests, on real git.
 - `tests/e2e/run.sh` runs the person's journey on the real app and Docker, on Linux.
