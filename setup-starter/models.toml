@@ -1,0 +1,29 @@
+# The models the agents may use. A provider is "anthropic" (the Anthropic API key) or
+# "claude-code" (the Claude Code token).
+
+[models.sonnet]
+provider = "anthropic"
+name = "claude-sonnet-5-5"
+title = "Claude Sonnet 5.5"
+timeout_seconds = 600
+
+[models.opus]
+provider = "anthropic"
+name = "claude-opus-5-5"
+title = "Claude Opus 5.5"
+timeout_seconds = 600
+
+[models.cc-opus]
+provider = "claude-code"
+name = "claude-opus-5-5"
+title = "Claude Opus 5.5 (Claude Code)"
+
+[models.cc-sonnet]
+provider = "claude-code"
+name = "claude-sonnet-5-5"
+title = "Claude Sonnet 5.5 (Claude Code)"
+
+[models.cc-haiku]
+provider = "claude-code"
+name = "claude-haiku-5-5"
+title = "Claude Haiku 5.5 (Claude Code)"

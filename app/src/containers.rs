@@ -7,14 +7,11 @@ use std::time::Duration;
 use crate::actions::Action;
 use crate::control;
 use crate::folder::{self, Folder, Keys};
+use crate::setup::{self, Setup};
 
 /// The project's files, as this repository's `compose/` holds them.
 const FILES: &[(&str, &str)] = &[
     ("compose.yaml", include_str!("../../compose/compose.yaml")),
-    (
-        "robinauts.toml",
-        include_str!("../../compose/robinauts.toml"),
-    ),
     (
         "fetch/Dockerfile",
         include_str!("../../compose/fetch/Dockerfile"),
@@ -65,6 +62,14 @@ impl Project {
         self.compose("start the control plane", &args)
     }
 
+    /// The control plane reads Robinauts' configuration as it starts, so a new setup needs new
+    /// containers.
+    pub fn up_control_plane_anew(&self) -> Action {
+        let mut args = vec!["up", "--detach", "--no-build", "--force-recreate"];
+        args.extend_from_slice(CONTROL_PLANE);
+        self.compose("start the control plane anew, with the new setup", &args)
+    }
+
     pub fn up_code(&self) -> Action {
         self.compose(
             "start the code worker",
@@ -72,10 +77,11 @@ impl Project {
         )
     }
 
-    /// The code worker reads its token as it starts, so a new token needs a new container.
-    pub fn up_code_with_new_token(&self) -> Action {
+    /// The code worker reads its token and Robinauts' configuration as it starts, so a change to
+    /// either needs a new container.
+    pub fn up_code_anew(&self) -> Action {
         self.compose(
-            "start the code worker, with its new token",
+            "start the code worker anew, with its new token or setup",
             &["up", "--detach", "--no-build", "--force-recreate", "code"],
         )
     }
@@ -125,9 +131,15 @@ impl Project {
     /// The actions of a start, in order, as `--plan` prints them. The steps between them are
     /// HTTP requests to the control plane.
     pub fn start_plan(&self) -> Vec<String> {
+        let setup_folder = self
+            .folder
+            .settings()
+            .setup_folder
+            .unwrap_or_else(|| "(chosen on this screen)".to_string());
         vec![
+            format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/"),
             format!(
-                "write {}: {}",
+                "write {}: {}, robinauts.toml",
                 self.folder.compose().display(),
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
@@ -136,7 +148,11 @@ impl Project {
                 self.folder.secrets().display()
             ),
             self.build().line(),
-            self.up_control_plane().line(),
+            format!(
+                "{}, or with a new setup: {}",
+                self.up_control_plane().line(),
+                self.up_control_plane_anew().line()
+            ),
             format!(
                 "GET http://127.0.0.1:{}/auth/session, until it answers",
                 self.port
@@ -147,9 +163,9 @@ impl Project {
                 self.port
             ),
             format!(
-                "{}, or with a new token: {}",
+                "{}, or with a new token or a new setup: {}",
                 self.up_code().line(),
-                self.up_code_with_new_token().line()
+                self.up_code_anew().line()
             ),
             format!(
                 "GET http://127.0.0.1:{}/health, until it answers ok",
@@ -158,8 +174,9 @@ impl Project {
         ]
     }
 
-    /// Writes the project's files and the secrets the start needs.
-    pub fn write(&self, keys: &Keys) -> std::io::Result<()> {
+    /// Writes the project's files, the setup's and the secrets the start needs. The answer says
+    /// whether the setup, Robinauts' configuration, changed.
+    pub fn write(&self, keys: &Keys, setup: &Setup) -> std::io::Result<bool> {
         self.folder.ensure()?;
         let root = self.folder.compose();
         for (name, text) in FILES {
@@ -187,34 +204,56 @@ impl Project {
             &env_file(&[
                 ("CLAUDE_CODE_OAUTH_TOKEN", &keys.claude_code),
                 ("GITHUB_TOKEN", &keys.github),
-                ("GIT_AUTHOR_NAME", &keys.git_name),
-                ("GIT_AUTHOR_EMAIL", &keys.git_email),
-                ("GIT_COMMITTER_NAME", &keys.git_name),
-                ("GIT_COMMITTER_EMAIL", &keys.git_email),
+                ("GIT_AUTHOR_NAME", &setup.git_name),
+                ("GIT_AUTHOR_EMAIL", &setup.git_email),
+                ("GIT_COMMITTER_NAME", &setup.git_name),
+                ("GIT_COMMITTER_EMAIL", &setup.git_email),
             ]),
         )?;
         if self.folder.read_secret("worker_token").is_empty() {
             self.folder.write_secret("worker_token", "")?;
         }
-        Ok(())
+        let config = root.join("robinauts.toml");
+        let changed =
+            fs::read_to_string(&config).ok().as_deref() != Some(setup.robinauts_toml.as_str());
+        folder::write_file(&config, &setup.robinauts_toml, 0o644)?;
+        Ok(changed)
     }
 
-    /// The whole start: the files, the images, the control plane, the token, the code worker.
+    /// The setup folder the person chose, read and checked.
+    pub fn read_setup(&self) -> Result<Setup, String> {
+        let chosen =
+            self.folder.settings().setup_folder.ok_or_else(|| {
+                "no setup folder yet: choose one on the Welcome screen".to_string()
+            })?;
+        let at = std::path::Path::new(&chosen);
+        setup::read(at).map_err(|e| format!("the setup folder {chosen}: {e}"))
+    }
+
+    /// The whole start: the setup folder, the files, the images, the control plane, the token,
+    /// the code worker. A changed setup starts the control plane and the code worker anew.
     pub fn start(&self, keys: &Keys, say: &mut dyn FnMut(&str)) -> Result<(), String> {
         let logs = self.folder.logs();
-        self.write(keys)
+        say("Reading the setup folder.");
+        let setup = self.read_setup()?;
+        let setup_changed = self
+            .write(keys, &setup)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
         say("Building the images. The first build takes several minutes.");
         self.build().run(&logs, &mut *say)?;
-        self.up_control_plane().run(&logs, &mut *say)?;
+        if setup_changed {
+            self.up_control_plane_anew().run(&logs, &mut *say)?;
+        } else {
+            self.up_control_plane().run(&logs, &mut *say)?;
+        }
         say("Waiting for the control plane to answer.");
         control::wait_until_up(self.port, Duration::from_secs(180))?;
         let launch = self.folder.read_secret("launch");
         let held = control::service_tokens(self.port, &launch)?;
         let saved_id = self.folder.read_secret("worker_token_id");
         let saved = self.folder.read_secret("worker_token");
-        match token_step(&saved_id, &saved, &held) {
-            TokenStep::Keep => self.up_code().run(&logs, &mut *say)?,
+        let new_token = match token_step(&saved_id, &saved, &held) {
+            TokenStep::Keep => false,
             TokenStep::Replace { revoke } => {
                 say("Creating the code worker's token.");
                 for id in revoke {
@@ -225,9 +264,14 @@ impl Project {
                     .write_secret("worker_token", &token)
                     .and_then(|_| self.folder.write_secret("worker_token_id", &id))
                     .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
-                self.up_code_with_new_token().run(&logs, &mut *say)?
+                true
             }
         };
+        if new_token || setup_changed {
+            self.up_code_anew().run(&logs, &mut *say)?;
+        } else {
+            self.up_code().run(&logs, &mut *say)?;
+        }
         say("Waiting for the code worker to join.");
         for _ in 0..120 {
             if control::health(self.port) == "ok" {

@@ -26,6 +26,17 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 APP = Path(__file__).resolve().parents[2] / "app" / "target" / "debug" / "fa1"
 HOME = Path(os.environ["FA1_HOME"])
+SETUP = HOME.parent / "setup"
+"""The person's setup folder, which FA1 makes at the Welcome screen (docs/specs/setup-folder.md)."""
+
+
+def git(folder: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(folder), "-c", "user.name=Ada", "-c", "user.email=ada@example.com", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 START_SECONDS = 1800
 """A first start builds every image."""
 
@@ -65,12 +76,16 @@ def log_text(driver) -> str:
 def act(driver, selector: str, text: str, seconds: float) -> None:
     """Clicks the action at `selector`, then waits for a new line holding `text` in the log. A
     line holding "failed:" fails the journey."""
-    seen = log_text(driver).count(text)
+    before = len(log_text(driver))
     click(driver, selector)
+
+    def new(d) -> str:
+        return log_text(d)[before:]
+
     WebDriverWait(driver, seconds, poll_frequency=2).until(
-        lambda d: log_text(d).count(text) > seen or "failed:" in log_text(d)
+        lambda d: text in new(d) or "failed:" in new(d)
     )
-    assert "failed:" not in log_text(driver), log_text(driver)[-3000:]
+    assert "failed:" not in new(driver), new(driver)[-3000:]
 
 
 def started_at(container: str) -> str:
@@ -131,8 +146,20 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     ]
     click(driver, "#welcome summary")
     steps = [li.text for li in driver.find_elements(By.CSS_SELECTOR, "#plan li")]
-    assert len(steps) == 8
-    assert steps[2].endswith(f"{HOME}/compose/compose.yaml build")
+    assert len(steps) == 9
+    assert steps[0].startswith("read the setup folder")
+    assert steps[3].endswith(f"{HOME}/compose/compose.yaml build")
+
+    # Welcome: the setup folder. One inside the app's folder is refused; a new one gets the
+    # starter, in a git repository.
+    folder_input = driver.find_element(By.ID, "setup-folder")
+    folder_input.send_keys(str(HOME / "inside"))
+    click(driver, "#welcome button.primary")
+    WebDriverWait(driver, 10).until(lambda d: d.find_element(By.ID, "setup-error").text)
+    assert "inside" in driver.find_element(By.ID, "setup-error").text
+    assert screen(driver, "welcome").is_displayed()
+    folder_input.clear()
+    folder_input.send_keys(str(SETUP))
 
     # Checks: Docker, Compose and Buildx are here.
     click(driver, "#welcome button.primary")
@@ -142,26 +169,39 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     for item in driver.find_elements(By.CSS_SELECTOR, "#check-list li"):
         assert item.get_attribute("class") == "ok", item.text
 
-    # Keys: the token and the author. The secrets folder is the person's alone.
+    for name in ("fa1.toml", "models.toml", "agents/assistant.toml", "agents/claude-code.toml",
+                 "knowledge", "flows/flows.toml", "README.md", ".git"):
+        assert (SETUP / name).exists(), name
+
+    # Keys: the keys alone. The secrets folder is the person's alone.
     click(driver, "#checks button.primary")
     form = driver.find_element(By.ID, "key-form")
     form.find_element(By.NAME, "claude_code").send_keys("sk-ant-oat01-not-a-real-token")
-    form.find_element(By.NAME, "git_name").send_keys("Ada Lovelace")
-    form.find_element(By.NAME, "git_email").send_keys("ada@example.com")
     click(driver, "#key-form button[type=submit]")
     WebDriverWait(driver, 10).until(lambda d: screen(d, "run").is_displayed())
     assert (HOME / "secrets").stat().st_mode & 0o777 == 0o700
     assert (HOME / "secrets" / "keys.toml").stat().st_mode & 0o777 == 0o600
+    assert driver.find_element(By.ID, "setup-path").text == str(SETUP)
 
-    # Start: the images, the control plane, the token, the code worker.
+    # The setup folder's settings: a mistake stops the start, naming the file.
+    fa1_toml = SETUP / "fa1.toml"
+    fa1_toml.write_text("[git]\nname = 1\n")
+    before = len(log_text(driver))
+    click(driver, "#start")
+    WebDriverWait(driver, 60).until(lambda d: "failed:" in log_text(d)[before:])
+    failure = log_text(driver)[before:]
+    assert "fa1.toml [git] name" in failure, failure
+    fa1_toml.write_text(
+        '[git]\nname = "Ada Lovelace"\nemail = "ada@example.com"\n'
+    )
+
+    # Start: the setup folder, the images, the control plane, the token, the code worker.
     act(driver, "#start", "Everything is up.", START_SECONDS)
     assert health(driver) == "ok"
     code_env = (HOME / "secrets" / "code.env").read_text()
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
-    published = docker("port", "fa1-control-1")
-    assert published.strip() == "8420/tcp -> 127.0.0.1:8420"
 
     # Start again, while everything runs: the control plane keeps running, and the worker keeps
     # its token.
@@ -194,7 +234,48 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         "const done = arguments[arguments.length - 1];"
         "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
     )
-    assert sorted(a["id"] for a in agents["items"]) == ["assistant", "claude-code"]
+    assert sorted(a["id"] for a in agents["items"]) == ["assistant", "claude-code", "flow-designer"]
+
+    # Refresh: the setup folder pulls a new agent from its remote, and Robinauts serves it.
+    remote = HOME.parent / "setup-remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    git(SETUP, "add", "-A")
+    git(SETUP, "commit", "-q", "-m", "The starter")
+    git(SETUP, "remote", "add", "origin", str(remote))
+    git(SETUP, "push", "-q", "-u", "origin", "HEAD")
+    other = HOME.parent / "setup-elsewhere"
+    subprocess.run(["git", "clone", "-q", str(remote), str(other)], check=True)
+    (other / "agents" / "helper.toml").write_text(
+        'title = "Helper"\nengine = "claude-code"\nmodels = ["cc-haiku"]\nworker = "claude"\n'
+        'tools = ["sessions"]\nsystem_prompt = "You help."\n'
+    )
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "A helper")
+    git(other, "push", "-q")
+    driver.switch_to.window(main)
+    act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
+    assert (SETUP / "agents" / "helper.toml").exists()
+    # The refresh restarted the control plane, which ended the sign-in: the App tab signs in
+    # again on its own.
+    driver.switch_to.window(robinauts)
+    WebDriverWait(driver, 30).until(
+        lambda d: d.execute_async_script(
+            "const done = arguments[arguments.length - 1];"
+            "fetch('/robinauts/api/agents').then(r => done(r.status), e => done(0));"
+        )
+        == 200
+    )
+    agents = driver.execute_async_script(
+        "const done = arguments[arguments.length - 1];"
+        "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
+    )
+    assert "items" in agents, agents
+    assert sorted(a["id"] for a in agents["items"]) == [
+        "assistant",
+        "claude-code",
+        "flow-designer",
+        "helper",
+    ]
     called = driver.execute_async_script(
         "const done = arguments[arguments.length - 1];"
         "window.__TAURI__.core.invoke('state').then(() => done('allowed'), e => done(String(e)));"

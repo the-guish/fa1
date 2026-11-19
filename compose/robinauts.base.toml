@@ -1,0 +1,50 @@
+# Robinauts' configuration in mode 2, FA1's fixed part: the model providers, the tool servers and
+# the workers. The app adds the person's models and agents from the setup folder
+# (docs/specs/setup-folder.md) and writes robinauts.toml. The keys are named here and set in their
+# containers by the app (docs/specs/containers.md).
+
+# --- the model providers ------------------------------------------------------------------------
+
+# Anthropic's API, for the assistant. The person's API key.
+[model_providers.anthropic]
+kind = "anthropic"
+api_key_env = "FA1_ANTHROPIC_KEY"
+
+# Anthropic, for the Claude Code worker alone, which signs in with the person's Claude Code token.
+# ANTHROPIC_API_KEY stays unset: the worker refuses a key beside the token.
+[model_providers.claude-code]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+
+# --- the tool servers: the project's MCP servers, by their service names ----------------------
+
+[tool_servers.fetch]
+url = "http://fetch:8932/mcp"
+auth = "none"
+timeout_seconds = 60
+
+[tool_servers.browser]
+url = "http://browser:8931/mcp"
+auth = "none"
+timeout_seconds = 120
+
+[tool_servers.files]
+url = "http://files:8935/mcp"
+secret_env = "FA1_FILES_KEY"
+timeout_seconds = 30
+
+[tool_servers.todo]
+url = "http://todo:8936/mcp"
+auth = "none"
+timeout_seconds = 30
+
+[tool_servers.diagrams]
+url = "http://diagrams:8937/mcp"
+auth = "none"
+timeout_seconds = 30
+
+# --- the workers --------------------------------------------------------------------------------
+
+# The code worker runs in its own container, which the app starts with a token it created.
+[workers.claude]
+external = true

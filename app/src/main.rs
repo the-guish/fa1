@@ -8,6 +8,7 @@ mod checks;
 mod containers;
 mod control;
 mod folder;
+mod setup;
 
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,8 +52,9 @@ struct State {
     port: u16,
     /// Which keys were given. The values stay in the core.
     given: serde_json::Value,
-    git_name: String,
-    git_email: String,
+    /// The setup folder, once chosen; and the one the Welcome screen suggests.
+    setup_folder: Option<String>,
+    suggested_setup_folder: String,
 }
 
 #[tauri::command]
@@ -69,8 +71,12 @@ fn state() -> State {
             "claude_code": !keys.claude_code.is_empty(),
             "github": !keys.github.is_empty(),
         }),
-        git_name: keys.git_name,
-        git_email: keys.git_email,
+        setup_folder: settings.setup_folder,
+        suggested_setup_folder: std::env::var_os("HOME")
+            .map(|home| std::path::Path::new(&home).join("fa1-setup"))
+            .unwrap_or_default()
+            .display()
+            .to_string(),
     }
 }
 
@@ -101,13 +107,50 @@ fn save_keys(keys: Keys) -> Result<(), String> {
             *field = given.trim().to_string();
         }
     }
-    saved.git_name = keys.git_name.trim().to_string();
-    saved.git_email = keys.git_email.trim().to_string();
     folder.save_keys(&saved).map_err(|e| e.to_string())?;
     let mut settings = folder.settings();
     settings.mode = Some("containers".to_string());
     settings.port.get_or_insert(DEFAULT_PORT);
     folder.save_settings(&settings).map_err(|e| e.to_string())
+}
+
+/// Makes `path` the setup folder: a new or empty folder gets the starter, in a git repository
+/// (docs/specs/setup-folder.md). The app keeps the location in its settings.
+#[tauri::command]
+fn choose_setup_folder(path: String) -> Result<String, String> {
+    let folder = folder();
+    folder.ensure().map_err(|e| e.to_string())?;
+    let chosen = std::path::PathBuf::from(path.trim());
+    setup::choose(&chosen, &folder.root, &folder.logs())?;
+    let mut settings = folder.settings();
+    settings.setup_folder = Some(chosen.display().to_string());
+    folder.save_settings(&settings).map_err(|e| e.to_string())?;
+    Ok(chosen.display().to_string())
+}
+
+/// Pulls the setup folder, then starts with it: the control plane and the code worker start anew
+/// when the setup changed.
+#[tauri::command]
+fn refresh(app: AppHandle) -> Result<(), String> {
+    let project = project();
+    let keys = project.folder.keys();
+    let signer = app.clone();
+    in_background(app, "refresh", move |say| {
+        let chosen = project
+            .folder
+            .settings()
+            .setup_folder
+            .ok_or("no setup folder yet: choose one on the Welcome screen")?;
+        setup::pull(
+            std::path::Path::new(&chosen),
+            &keys.github,
+            &project.folder.logs(),
+            &mut *say,
+        )?;
+        project.start(&keys, say)?;
+        sign_in_again(&signer, project.port, &project.folder.read_secret("launch"));
+        Ok(())
+    })
 }
 
 /// Runs `work` on a thread of its own. Its lines go to the admin screens as `log` events, and
@@ -139,7 +182,25 @@ fn start(app: AppHandle) -> Result<(), String> {
     if keys.claude_code.is_empty() {
         return Err("the Claude Code token is missing: add it on the Keys screen".to_string());
     }
-    in_background(app, "start", move |say| project.start(&keys, say))
+    let signer = app.clone();
+    in_background(app, "start", move |say| {
+        project.start(&keys, say)?;
+        sign_in_again(&signer, project.port, &project.folder.read_secret("launch"));
+        Ok(())
+    })
+}
+
+/// A start may restart the control plane, which ends the App tab's sign-in. An open App tab
+/// loads Robinauts again, with a new ticket.
+fn sign_in_again(app: &AppHandle, port: u16, launch: &str) {
+    let Some(webview) = app.get_webview(APP) else {
+        return;
+    };
+    if let Ok(url) = control::ticket_url(port, launch)
+        && let Ok(url) = url.parse::<tauri::Url>()
+    {
+        let _ = webview.navigate(url);
+    }
 }
 
 #[tauri::command]
@@ -346,6 +407,8 @@ fn main() {
             status,
             open_robinauts,
             show_tab,
+            choose_setup_folder,
+            refresh,
             reset_code,
             remove_everything
         ])

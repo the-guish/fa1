@@ -12,6 +12,8 @@ fn main() {
             "status",
             "open_robinauts",
             "show_tab",
+            "choose_setup_folder",
+            "refresh",
             "reset_code",
             "remove_everything",
         ]),

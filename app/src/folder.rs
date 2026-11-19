@@ -36,6 +36,8 @@ pub struct Settings {
     /// `containers` once the person chose mode 2.
     pub mode: Option<String>,
     pub port: Option<u16>,
+    /// The setup folder's location (docs/specs/setup-folder.md).
+    pub setup_folder: Option<String>,
 }
 
 /// What the person typed on the Keys screen. Empty means not given.
@@ -47,10 +49,6 @@ pub struct Keys {
     pub claude_code: String,
     #[serde(default)]
     pub github: String,
-    #[serde(default)]
-    pub git_name: String,
-    #[serde(default)]
-    pub git_email: String,
 }
 
 impl Folder {

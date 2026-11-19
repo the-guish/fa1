@@ -39,12 +39,19 @@
           <span>The coding agents run in a VM of their own. Not available yet.</span>
         </label>
       </div>
-      <p>FA1 keeps everything it makes in <code id="folder"></code>.</p>
+      <label class="field">Your setup folder <em>your agents, models, knowledge and flows, in a git
+          repository of your own</em>
+        <input type="text" id="setup-folder" autocomplete="off" spellcheck="false">
+        <small class="hint">A new or empty folder gets a starter. Push it to a private repository on
+          GitHub: on a new computer, clone it, install FA1 and choose it here.</small>
+      </label>
+      <p id="setup-error" class="error" role="alert"></p>
+      <p>FA1 keeps everything else it makes in <code id="folder"></code>, and can lose it.</p>
       <details>
         <summary>What the first start runs</summary>
         <ol id="plan"></ol>
       </details>
-      <button class="primary" data-go="checks">Next</button>
+      <button class="primary" id="welcome-next">Next</button>
     </section>
 
     <section id="checks" hidden>
@@ -73,12 +80,7 @@
           <input type="password" name="github" autocomplete="off" placeholder="github_pat_...">
           <small data-given="github"></small>
         </label>
-        <label>Your name, for the agents' commits <em>optional</em>
-          <input type="text" name="git_name" autocomplete="off">
-        </label>
-        <label>Your email, for the agents' commits <em>optional</em>
-          <input type="email" name="git_email" autocomplete="off">
-        </label>
+        <p id="key-error" class="error" role="alert"></p>
         <button class="primary" type="submit">Save and continue</button>
       </form>
     </section>
@@ -95,6 +97,14 @@
       <pre id="containers"></pre>
       <h3>Log</h3>
       <pre id="log"></pre>
+      <h3>Setup folder</h3>
+      <p><code id="setup-path"></code></p>
+      <div class="row">
+        <button id="refresh-setup">Refresh from the setup folder</button>
+        <button data-go="welcome">Change</button>
+      </div>
+      <p class="hint">Refresh pulls the folder, then deploys it: the control plane and the code worker
+        start anew when it changed, and a turn that runs then ends.</p>
       <h3>Reset and removal</h3>
       <div class="row">
         <button id="reset">Reset the code worker</button>

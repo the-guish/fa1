@@ -57,8 +57,9 @@ async function load() {
     small.textContent = state.given[small.dataset.given] ? "Saved." : "";
   }
   const form = $("#key-form");
-  form.git_name.value = state.git_name;
-  form.git_email.value = state.git_email;
+  $("#setup-folder").value = state.setup_folder || "";
+  $("#setup-folder").placeholder = state.suggested_setup_folder;
+  $("#setup-path").textContent = state.setup_folder || "none yet";
   const plan = $("#plan");
   plan.textContent = "";
   for (const step of await invoke("plan")) {
@@ -77,23 +78,38 @@ for (const button of document.querySelectorAll("[data-go]")) {
 
 $("#recheck").addEventListener("click", runChecks);
 
+$("#welcome-next").addEventListener("click", async () => {
+  const input = $("#setup-folder");
+  $("#setup-error").textContent = "";
+  try {
+    const chosen = await invoke("choose_setup_folder", { path: input.value.trim() || input.placeholder });
+    input.value = chosen;
+    $("#setup-path").textContent = chosen;
+    show("checks");
+  } catch (error) {
+    $("#setup-error").textContent = `${error}`;
+  }
+});
+
 $("#key-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const keys = Object.fromEntries(new FormData(form));
+  $("#key-error").textContent = "";
   try {
     await invoke("save_keys", { keys });
     for (const field of ["claude_code", "anthropic", "github"]) form[field].value = "";
     await load();
     show("run");
   } catch (error) {
-    alert(error);
+    $("#key-error").textContent = `${error}`;
   }
 });
 
 $("#start").addEventListener("click", () => act("start"));
 $("#stop").addEventListener("click", () => act("stop"));
 $("#refresh").addEventListener("click", refresh);
+$("#refresh-setup").addEventListener("click", () => act("refresh"));
 $("#open").addEventListener("click", () => act("open_robinauts"));
 $("#reset").addEventListener("click", () => {
   if (confirm("Delete the code worker's container, workspaces and transcripts, and start it again?")) {

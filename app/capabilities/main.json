@@ -13,6 +13,8 @@
     "allow-status",
     "allow-open-robinauts",
     "allow-show-tab",
+    "allow-choose-setup-folder",
+    "allow-refresh",
     "allow-reset-code",
     "allow-remove-everything"
   ]

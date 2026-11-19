@@ -70,13 +70,15 @@ It holds:
 
 ## Screens
 
-1. **Welcome.** The three modes, each with what it protects against.
+1. **Welcome.** The three modes, each with what it protects against, and the setup folder's
+   location ([setup-folder.md](setup-folder.md)).
 2. **Checks.** The prerequisites of the chosen mode, the free memory and the free disk.
    A missing prerequisite shows the exact command that installs it.
-3. **Keys.** The model providers' keys, the Claude Code token and the GitHub token.
+3. **Keys.** The model providers' keys, the Claude Code token and the GitHub token. The rest of
+   the person's settings is in the setup folder.
 4. **Build.** The progress of each action, and its log.
-5. **Status.** Each part and its health, its log, and a button that opens Robinauts in the App
-   tab.
+5. **Status.** Each part and its health, its log, a button that opens Robinauts in the App tab,
+   and the setup folder: its location, **Refresh**, and **Change**.
 6. **Reset the code worker.**
 7. **Update.** A new release of FA1 rebuilds the images.
 8. **Remove everything.** The list of what it deletes, then a confirmation.
