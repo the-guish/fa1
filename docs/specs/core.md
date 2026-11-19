@@ -24,6 +24,8 @@ from the rest.
 | the code worker | Robinauts' Claude Code worker, in Docker | depends on the mode |
 
 - The control plane holds the conversations and the model keys. It serves the interface.
+- FA1 is the host of the control plane. It composes Robinauts, neorc and FA1's own
+  applications on oneberth ([apps.md](apps.md)).
 - The code worker runs the coding agents. It reaches the control plane's worker listener, the
   MCP servers and the internet.
 
@@ -77,13 +79,16 @@ The app reaches the control plane the same way in every mode:
 
 ## What FA1 takes from Robinauts
 
-- The server: `robinauts start --local --host <bind> --public-host 127.0.0.1`, with
-  `ROBINAUTS_DATA_DIR`.
+- The server's parts: `robinauts_parts`, which returns Robinauts' component and neorc's from
+  the environment, with `ROBINAUTS_DATA_DIR`. FA1 composes them itself, in the local mode
+  ([apps.md](apps.md)).
+- The interface as a package: `@robinauts/ui`, packed by `scripts/robinauts-ui-pack.sh`.
 - The external worker: `[workers.claude]` with `external = true`.
 - The Claude Code worker's image, from `extra-workers/claude-code-worker`.
 - The to-do list and diagrams MCP servers, from `mcp/`.
 
-FA1 uses no part of oneberth's launcher.
+FA1 uses oneberth's `compose_app`, `run` and `Shell` directly. It uses no part of oneberth's
+launcher.
 
 ## Release blockers
 
