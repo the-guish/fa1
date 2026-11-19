@@ -1,7 +1,7 @@
 {
   "identifier": "main",
-  "description": "FA1's own window: the app's commands and its events. The Robinauts window has none.",
-  "windows": ["main"],
+  "description": "FA1's own webviews, the bar and the admin screens: the app's commands and its events. It lists webviews, not the window: a window label would also grant the Robinauts webview in that window.",
+  "webviews": ["bar", "admin"],
   "permissions": [
     "core:event:default",
     "allow-state",
@@ -12,6 +12,7 @@
     "allow-stop",
     "allow-status",
     "allow-open-robinauts",
+    "allow-show-tab",
     "allow-reset-code",
     "allow-remove-everything"
   ]

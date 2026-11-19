@@ -73,11 +73,22 @@ alone, and its files by every user, so the containers' users read them.
 
 1. The app writes the secrets files. `worker_token` starts empty.
 2. `docker compose up` for `control` and the MCP servers. The app waits for `/auth/session`.
-3. With no worker token yet, the app creates one with `POST /auth/services`: the role
-   `robinauts/worker` and the resource `claude`. It writes the token to `worker_token`.
-4. `docker compose up` for `code`.
+3. The app lists the service tokens with `GET /auth/services`. A listed id equal to
+   `worker_token_id` keeps the worker's token. Otherwise the app makes a new one, as below.
+4. `docker compose up` for `code`. With a new token, `--force-recreate` starts a new container,
+   since the worker reads its token as it starts.
 5. `/health` answers `ok` once `code` reaches the worker listener. The app asks for a ticket and
    opens Robinauts.
+
+A token the launch secret makes lives in the memory of `control`, so a stop of `control` ends it.
+The app makes a new token in two requests:
+
+1. `DELETE /auth/services/<id>` for each token named `fa1-code` the list holds.
+2. `POST /auth/services` for a token named `fa1-code`, with the role `robinauts/worker` and the
+   resource `claude`. The app writes its secret to `worker_token` and its id to
+   `worker_token_id`.
+
+A new token restarts `code` alone. `control` keeps running, with its conversations and turns.
 
 ## The code worker
 

@@ -45,33 +45,101 @@ pub fn health(port: u16) -> String {
         .unwrap_or_else(|| "unreachable".to_string())
 }
 
-fn post(port: u16, path: &str, launch: &str, body: Value) -> Result<Value, String> {
-    let url = format!("{}{path}", base(port));
-    let mut response = agent()
-        .post(&url)
-        .header("authorization", &format!("Bearer {launch}"))
-        .send_json(body)
-        .map_err(|e| format!("POST {path}: {e}"))?;
+/// The answer of a request with the launch secret as the bearer: its JSON, or `Null` for none.
+fn answer(
+    method: &str,
+    path: &str,
+    response: ureq::http::Response<ureq::Body>,
+) -> Result<Value, String> {
+    let mut response = response;
     let status = response.status();
     let text = response.body_mut().read_to_string().unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("POST {path} answered {status}: {text}"));
+        return Err(format!("{method} {path} answered {status}: {text}"));
     }
-    serde_json::from_str(&text).map_err(|e| format!("POST {path}: {e}"))
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|e| format!("{method} {path}: {e}"))
 }
 
-/// A service token of `robinauts/worker` bound to the worker `claude`: the code worker's.
-pub fn create_worker_token(port: u16, launch: &str) -> Result<String, String> {
+fn get(port: u16, path: &str, launch: &str) -> Result<Value, String> {
+    let response = agent()
+        .get(&format!("{}{path}", base(port)))
+        .header("authorization", &format!("Bearer {launch}"))
+        .call()
+        .map_err(|e| format!("GET {path}: {e}"))?;
+    answer("GET", path, response)
+}
+
+fn delete(port: u16, path: &str, launch: &str) -> Result<Value, String> {
+    let response = agent()
+        .delete(&format!("{}{path}", base(port)))
+        .header("authorization", &format!("Bearer {launch}"))
+        .call()
+        .map_err(|e| format!("DELETE {path}: {e}"))?;
+    answer("DELETE", path, response)
+}
+
+fn post(port: u16, path: &str, launch: &str, body: Value) -> Result<Value, String> {
+    let response = agent()
+        .post(&format!("{}{path}", base(port)))
+        .header("authorization", &format!("Bearer {launch}"))
+        .send_json(body)
+        .map_err(|e| format!("POST {path}: {e}"))?;
+    answer("POST", path, response)
+}
+
+/// The name of the code worker's service token.
+pub const WORKER_TOKEN_NAME: &str = "fa1-code";
+
+/// A service token the control plane holds, as it lists them: no secret.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServiceToken {
+    pub id: String,
+    pub name: String,
+}
+
+/// Every service token the control plane holds. A token the launch secret made lives in the
+/// control plane's memory, so a stop of the control plane ends it.
+pub fn service_tokens(port: u16, launch: &str) -> Result<Vec<ServiceToken>, String> {
+    let listed = get(port, "/auth/services", launch)?;
+    let items = listed
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "GET /auth/services answered no items".to_string())?;
+    Ok(items
+        .iter()
+        .filter_map(|item| {
+            Some(ServiceToken {
+                id: item.get("id")?.as_str()?.to_string(),
+                name: item.get("name")?.as_str()?.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Ends the service token `id`.
+pub fn revoke_service_token(port: u16, launch: &str, id: &str) -> Result<(), String> {
+    delete(port, &format!("/auth/services/{id}"), launch).map(|_| ())
+}
+
+/// A service token of `robinauts/worker` bound to the worker `claude`: the code worker's. The
+/// answer is its id, then its secret.
+pub fn create_worker_token(port: u16, launch: &str) -> Result<(String, String), String> {
     let made = post(
         port,
         "/auth/services",
         launch,
-        json!({"name": "fa1-code", "role": "robinauts/worker", "resource": "claude"}),
+        json!({"name": WORKER_TOKEN_NAME, "role": "robinauts/worker", "resource": "claude"}),
     )?;
-    made.get("secret")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "POST /auth/services answered no secret".to_string())
+    let field = |name: &str| {
+        made.get(name)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("POST /auth/services answered no {name}"))
+    };
+    Ok((field("id")?, field("secret")?))
 }
 
 /// The address that signs the person in, once, within a minute.
