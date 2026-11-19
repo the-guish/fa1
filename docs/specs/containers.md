@@ -46,7 +46,7 @@ Each service keeps its data in a named volume of the project:
 
 | volume | service | mounted at | holds |
 |---|---|---|---|
-| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db` |
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db`; `folders/`: the review app's starting folder |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |

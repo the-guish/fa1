@@ -42,6 +42,8 @@ services:
       # The flows, from the setup folder: the server uploads them to neorc at its start, and
       # runs neorc's worker beside itself, with the handlers of flows/handlers/.
       ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
+      # The review app's starting folder, in the control plane's volume (docs/specs/apps.md).
+      REVIEWS_ROOT: /var/lib/robinauts/folders
     env_file: ${FA1_SECRETS:?}/control.env
     secrets: [launch]
     volumes:

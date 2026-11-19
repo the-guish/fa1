@@ -5,7 +5,7 @@ neorc: an icon on the rail of the App tab, and an API of its own on the control 
 
 | application | shows | keeps |
 |---|---|---|
-| `reviews` | one panel, a placeholder: "something to review" | `reviews.db`: one table, empty |
+| `reviews` | the changelists to review, and each one's changes side by side ([review-app.md](review-app.md)) | `reviews.db`, and the changelists' copies in `reviews/` |
 
 ## FA1 is the host
 
@@ -86,6 +86,8 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
   with the control plane's.
 - Robinauts checks its own file at each start, and pins its schema. `robinauts.db` holds
   Robinauts' tables alone.
+- The review app's starting folder is `folders/`, beside `data/` in the volume `control-data`.
+  `REVIEWS_ROOT` names it.
 
 ## What an application may use
 
@@ -108,8 +110,9 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
 ## Tests
 
 - The unit tests compare the files the app writes with `apps/`.
-- The journey finds Reviews on the rail below neorc, opens it, reads its panel, asks its API,
-  and finds `reviews.db` in the data directory.
+- The journey finds Reviews on the rail below neorc. It proposes a changelist through the API,
+  opens it on the Pending list, reads its change side by side, and approves it. The folder then
+  holds the new version, and the data directory holds `reviews.db`.
 
 ## Open
 
@@ -120,3 +123,4 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
 - Applications the person chooses, in the setup folder.
 - Mode 3. The control VM's recipe builds this image.
 - One application reading another's records.
+- A way for the person's own folders and the agents to reach the review app's starting folder.
