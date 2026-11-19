@@ -1,0 +1,5 @@
+# The form that starts hello.yaml, in Robinauts' Flows.
+title = "Hello"
+
+[inputs.name]
+label = "Your name"

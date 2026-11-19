@@ -1,0 +1,15 @@
+# A first flow, to try flows: one task, no model. It greets whoever the form names.
+name: hello
+version: 0.1.0
+
+inputs:
+  name: string
+
+output: tasks.greet
+
+steps:
+  greet:
+    queue: default
+    handler: examples:hello
+    params:
+      name: inputs.name

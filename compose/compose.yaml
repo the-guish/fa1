@@ -34,10 +34,14 @@ services:
     environment:
       ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
       ROBINAUTS_DATA_DIR: /var/lib/robinauts/data
+      # The flows, from the setup folder: the server uploads them to neorc at its start, and
+      # runs neorc's worker beside itself, with the handlers of flows/handlers/.
+      ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
     env_file: ${FA1_SECRETS:?}/control.env
     secrets: [launch]
     volumes:
       - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - ./flows:/etc/fa1/flows:ro
       - control-data:/var/lib/robinauts
     ports:
       - 127.0.0.1:${FA1_PORT:?}:${FA1_PORT:?}
