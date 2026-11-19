@@ -25,6 +25,11 @@ from reviews.backend import reviews
 INTERFACE = Path(__file__).resolve().parent / "dist"
 """The built interface: main.tsx and what it imports, as the image's build leaves it."""
 
+NO_DATA_DIR = (
+    "ROBINAUTS_DATA_DIR names no folder: the control plane keeps its records there, and so do"
+    " FA1's applications"
+)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="FA1's control plane")
@@ -33,6 +38,10 @@ def main() -> int:
     arguments = parser.parse_args()
     front = Listen("0.0.0.0", arguments.port)
     worker = Listen("127.0.0.1", arguments.worker_port)
+    data = os.environ.get("ROBINAUTS_DATA_DIR")
+    if not data:
+        print(NO_DATA_DIR, file=sys.stderr)
+        return 1
     try:
         robinauts = robinauts_parts(
             os.environ, front=front, worker=worker, local=True, public_host="127.0.0.1"
@@ -41,9 +50,8 @@ def main() -> int:
         print(refused, file=sys.stderr)
         return 1
     logging.basicConfig(level=logging.INFO)
-    data = Path(os.environ["ROBINAUTS_DATA_DIR"])
     composition = compose_app(
-        [*robinauts.components, reviews(data)],
+        [*robinauts.components, reviews(Path(data))],
         config=robinauts.oneberth,
         store=robinauts.store,
         interface=INTERFACE,
