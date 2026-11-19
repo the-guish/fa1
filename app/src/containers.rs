@@ -30,6 +30,28 @@ const FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// FA1's applications, as this repository's `apps/` holds them (docs/specs/apps.md). They are
+/// written to `compose/apps/`, the build context `extra` of `control`.
+const APPS: &[(&str, &str)] = &[
+    ("index.ts", include_str!("../../apps/index.ts")),
+    (
+        "reviews/ui/index.tsx",
+        include_str!("../../apps/reviews/ui/index.tsx"),
+    ),
+    (
+        "reviews/ui/ReviewsApp.tsx",
+        include_str!("../../apps/reviews/ui/ReviewsApp.tsx"),
+    ),
+    (
+        "reviews/ui/reviews.css",
+        include_str!("../../apps/reviews/ui/reviews.css"),
+    ),
+    (
+        "reviews/python/fa1_reviews/__init__.py",
+        include_str!("../../apps/reviews/python/fa1_reviews/__init__.py"),
+    ),
+];
+
 /// The services up before the code worker's token exists.
 const CONTROL_PLANE: &[&str] = &["control", "fetch", "browser", "files", "todo", "diagrams"];
 
@@ -139,7 +161,7 @@ impl Project {
         vec![
             format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/"),
             format!(
-                "write {}: {}, robinauts.toml, flows/",
+                "write {}: {}, robinauts.toml, flows/, apps/",
                 self.folder.compose().display(),
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
@@ -181,6 +203,18 @@ impl Project {
         let root = self.folder.compose();
         for (name, text) in FILES {
             let path = root.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            folder::write_file(&path, text, 0o644)?;
+        }
+        // The applications' folder, written anew: a file a release dropped goes too.
+        let apps = root.join("apps");
+        if apps.is_dir() {
+            fs::remove_dir_all(&apps)?;
+        }
+        for (name, text) in APPS {
+            let path = apps.join(name);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -378,8 +412,23 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::{TokenStep, env_file, token_step};
+    use super::{APPS, TokenStep, collect_files, env_file, token_step};
     use crate::control::{ServiceToken, WORKER_TOKEN_NAME};
+
+    #[test]
+    fn the_app_writes_every_file_of_the_applications() {
+        let apps = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps");
+        let mut found = Vec::new();
+        collect_files(&apps, &apps, &mut found).unwrap();
+        let mut found: Vec<String> = found
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        found.sort();
+        let mut written: Vec<String> = APPS.iter().map(|(name, _)| name.to_string()).collect();
+        written.sort();
+        assert_eq!(written, found);
+    }
 
     fn held(id: &str, name: &str) -> ServiceToken {
         ServiceToken {

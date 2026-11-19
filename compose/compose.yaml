@@ -4,11 +4,12 @@
 #   FA1_PORT     the port of the front listener, on the host's 127.0.0.1 and in `control`
 #   FA1_SECRETS  the app's secrets folder: control.env, code.env, files.env, launch, worker_token
 #
-# Every image is built here, from Robinauts at the pinned commit and from this folder.
+# Every image is built here, from Robinauts at the pinned commit and from this folder. `apps/`
+# holds FA1's own applications, which the image of `control` takes in.
 
 name: fa1
 
-x-robinauts: &robinauts https://github.com/the-guish/robinauts.git#9a7f42c942a9fc109be512afc56bbba0d17b858f
+x-robinauts: &robinauts https://github.com/the-guish/robinauts.git#2be8d2f2cf66189d5d5f9e1fade089eef421fd7a
 
 x-mcp: &mcp
   read_only: true
@@ -25,6 +26,10 @@ services:
   control:
     build:
       context: *robinauts
+      # FA1's applications: Robinauts' build compiles them into the interface, and puts the
+      # folder in the image at /opt/robinauts/extra (docs/specs/apps.md).
+      additional_contexts:
+        extra: ./apps
     command:
       - sh
       - -c
@@ -37,6 +42,10 @@ services:
       # The flows, from the setup folder: the server uploads them to neorc at its start, and
       # runs neorc's worker beside itself, with the handlers of flows/handlers/.
       ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
+      # FA1's applications, composed after Robinauts and neorc: each one's component, and the
+      # folder of its Python package.
+      ROBINAUTS_COMPONENTS: fa1_reviews:component
+      PYTHONPATH: /opt/robinauts/extra/reviews/python
     env_file: ${FA1_SECRETS:?}/control.env
     secrets: [launch]
     volumes:
@@ -98,7 +107,7 @@ services:
     build:
       context: ./todo
       additional_contexts:
-        source: https://github.com/the-guish/robinauts.git#9a7f42c942a9fc109be512afc56bbba0d17b858f:mcp/to-do-list
+        source: https://github.com/the-guish/robinauts.git#2be8d2f2cf66189d5d5f9e1fade089eef421fd7a:mcp/to-do-list
     volumes:
       - todos:/data
 
@@ -107,7 +116,7 @@ services:
     build:
       context: ./diagrams
       additional_contexts:
-        source: https://github.com/the-guish/robinauts.git#9a7f42c942a9fc109be512afc56bbba0d17b858f:mcp/diagrams
+        source: https://github.com/the-guish/robinauts.git#2be8d2f2cf66189d5d5f9e1fade089eef421fd7a:mcp/diagrams
 
 secrets:
   launch:

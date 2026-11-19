@@ -18,6 +18,8 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
 - The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.
+- The image of `control` takes FA1's applications from `compose/apps/`, the build context
+  `extra` ([apps.md](apps.md)).
 
 ## Network
 
@@ -42,7 +44,7 @@ Each service keeps its data in a named volume of the project:
 
 | volume | service | mounted at | holds |
 |---|---|---|---|
-| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db` |
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db` |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |

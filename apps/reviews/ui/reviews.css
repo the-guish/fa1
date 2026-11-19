@@ -1,0 +1,20 @@
+/* Reviews: one panel that fills the application's area, over oneberth's tokens. */
+
+.reviews-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 1rem;
+  background-color: var(--ground);
+}
+
+.reviews-panel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background-color: var(--panel);
+  color: var(--muted);
+}

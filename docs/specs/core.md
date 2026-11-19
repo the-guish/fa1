@@ -24,6 +24,8 @@ from the rest.
 | the code worker | Robinauts' Claude Code worker, in Docker | depends on the mode |
 
 - The control plane holds the conversations and the model keys. It serves the interface.
+- The control plane also runs FA1's own applications, beside Robinauts and neorc
+  ([apps.md](apps.md)).
 - The code worker runs the coding agents. It reaches the control plane's worker listener, the
   MCP servers and the internet.
 
@@ -82,6 +84,9 @@ The app reaches the control plane the same way in every mode:
 - The external worker: `[workers.claude]` with `external = true`.
 - The Claude Code worker's image, from `extra-workers/claude-code-worker`.
 - The to-do list and diagrams MCP servers, from `mcp/`.
+- The extra applications: the build context `extra` of Robinauts' image, and
+  `ROBINAUTS_COMPONENTS`. FA1's own applications join the control plane through both
+  ([apps.md](apps.md)).
 
 FA1 uses no part of oneberth's launcher.
 

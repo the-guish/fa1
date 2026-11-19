@@ -65,7 +65,8 @@ It holds:
 - `settings.toml`: the mode and the port.
 - `secrets/`: the launch secret, the keys and the worker's token, readable by the person alone.
 - `downloads/`: the sources and the images the build reads.
-- `compose/` in mode 2, `vms/` in mode 3.
+- `compose/` in mode 2, `vms/` in mode 3. `compose/apps/` holds FA1's applications
+  ([apps.md](apps.md)).
 - `logs/`: the actions and the parts' output.
 
 ## Screens
