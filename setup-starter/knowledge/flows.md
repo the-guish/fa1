@@ -5,6 +5,11 @@ a conversation with an agent and a model, waits for its answer, and hands a resu
 task. Flows live in `flows/` of this setup folder. FA1 deploys them at each start and refresh;
 the person runs them from the flow's form in Robinauts.
 
+## A first flow
+
+`flows/hello.yaml` greets whoever its form names, with one handler and no model
+(`handlers/examples.py`). Run it from Flows in Robinauts to see a run end to end.
+
 ## Files
 
 ```

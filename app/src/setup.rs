@@ -1,6 +1,6 @@
 //! The setup folder: the person's settings, models, agents, knowledge and flows, in a git
 //! repository of their own (docs/specs/setup-folder.md). FA1 reads it at each start and refresh,
-//! and makes Robinauts' configuration from it.
+//! and makes Robinauts' configuration and the flows' folder from it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,6 +51,18 @@ const STARTER: &[(&str, &str)] = &[
         include_str!("../../setup-starter/flows/code_and_review.form.toml"),
     ),
     (
+        "flows/hello.yaml",
+        include_str!("../../setup-starter/flows/hello.yaml"),
+    ),
+    (
+        "flows/hello.form.toml",
+        include_str!("../../setup-starter/flows/hello.form.toml"),
+    ),
+    (
+        "flows/handlers/examples.py",
+        include_str!("../../setup-starter/flows/handlers/examples.py"),
+    ),
+    (
         "flows/handlers/README.md",
         include_str!("../../setup-starter/flows/handlers/README.md"),
     ),
@@ -68,6 +80,8 @@ const PROVIDERS: &[&str] = &["anthropic", "claude-code"];
 pub struct Setup {
     /// Robinauts' configuration: FA1's fixed part, then the folder's models and agents.
     pub robinauts_toml: String,
+    /// The flows' folder (docs/specs/flows.md): the setup folder's `flows/`, by path inside it.
+    pub flows: Vec<(PathBuf, Vec<u8>)>,
     pub git_name: String,
     pub git_email: String,
 }
@@ -191,8 +205,13 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         toml::to_string(&added).map_err(|e| e.to_string())?
     );
 
+    table(folder, "flows/flows.toml")?;
+    let mut flows = Vec::new();
+    collect(&folder.join("flows"), Path::new(""), &mut flows)?;
+    flows.sort();
     Ok(Setup {
         robinauts_toml,
+        flows,
         git_name,
         git_email,
     })
@@ -253,6 +272,27 @@ fn table(folder: &Path, name: &str) -> Result<toml::Table, String> {
     toml::from_str(&text).map_err(|e| format!("{name}: {e}"))
 }
 
+/// Every file under `dir`, by its path from the flows' folder. Python's caches are left out.
+fn collect(dir: &Path, at: &Path, into: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("flows/: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        if name == "__pycache__" {
+            continue;
+        }
+        let path = entry.path();
+        let inside = at.join(&name);
+        if path.is_dir() {
+            collect(&path, &inside, into)?;
+        } else {
+            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            into.push((inside, bytes));
+        }
+    }
+    Ok(())
+}
+
 fn is_id(id: &str) -> bool {
     !id.is_empty()
         && id.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
@@ -301,6 +341,31 @@ mod tests {
             Some("claude-code")
         );
         assert_eq!(setup.git_name, "");
+        let flows = String::from_utf8(
+            setup
+                .flows
+                .iter()
+                .find(|(p, _)| p == Path::new("flows.toml"))
+                .unwrap()
+                .1
+                .clone(),
+        )
+        .unwrap();
+        assert!(flows.contains("code_location = \"handlers\""), "{flows}");
+        let paths: Vec<_> = setup
+            .flows
+            .iter()
+            .map(|(p, _)| p.display().to_string())
+            .collect();
+        for wanted in [
+            "code_and_review.yaml",
+            "handlers/robinauts_tasks.py",
+            "hello.yaml",
+            "hello.form.toml",
+            "handlers/examples.py",
+        ] {
+            assert!(paths.contains(&wanted.to_string()), "{wanted}: {paths:?}");
+        }
         let _ = fs::remove_dir_all(at);
     }
 
@@ -310,6 +375,7 @@ mod tests {
         let cases = [
             ("fa1.toml", "[git]\nname = 1", "fa1.toml [git] name"),
             ("fa1.toml", "not toml", "fa1.toml:"),
+            ("flows/flows.toml", "not toml", "flows/flows.toml:"),
             (
                 "models.toml",
                 "[models.x]\nprovider = \"openai\"",

@@ -14,6 +14,7 @@ them. FA1_HOME names the app's folder for the run. Nothing else may listen on 12
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -235,6 +236,37 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
     )
     assert sorted(a["id"] for a in agents["items"]) == ["assistant", "claude-code", "flow-designer"]
+
+    # Flows: the starter's hello flow runs on the control plane, started from Robinauts' page
+    # as a person would, and its handler's result is the run's output.
+    started = driver.execute_async_script(
+        "const done = arguments[arguments.length - 1];"
+        "fetch('/robinauts/api/flows/hello/runs', {method: 'POST',"
+        " headers: {'content-type': 'application/json'},"
+        " body: JSON.stringify({inputs: {name: 'Ada'}})})"
+        ".then(async r => done([r.status, await r.text()]), e => done([0, String(e)]));"
+    )
+    assert started[0] == 201, started
+    run_id = json.loads(started[1])["id"]
+
+    def run_state(d) -> dict:
+        for path in (f"/neorc/runs/{run_id}", f"/neorc/api/runs/{run_id}"):
+            answer = d.execute_async_script(
+                "const done = arguments[arguments.length - 1];"
+                "fetch(arguments[0]).then(async r => done([r.status, await r.text()]),"
+                " e => done([0, String(e)]));",
+                path,
+            )
+            if answer[0] == 200:
+                return json.loads(answer[1])
+        return {"status": "unknown", "answer": answer}
+
+    WebDriverWait(driver, 120, poll_frequency=2).until(
+        lambda d: run_state(d)["status"] in ("succeeded", "failed", "cancelled")
+    )
+    finished = run_state(driver)
+    assert finished["status"] == "succeeded", finished
+    assert finished["output"] == "Hello, Ada", finished
 
     # Refresh: the setup folder pulls a new agent from its remote, and Robinauts serves it.
     remote = HOME.parent / "setup-remote.git"

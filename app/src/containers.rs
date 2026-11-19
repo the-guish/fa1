@@ -137,9 +137,9 @@ impl Project {
             .setup_folder
             .unwrap_or_else(|| "(chosen on this screen)".to_string());
         vec![
-            format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/"),
+            format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/"),
             format!(
-                "write {}: {}, robinauts.toml",
+                "write {}: {}, robinauts.toml, flows/",
                 self.folder.compose().display(),
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
@@ -175,7 +175,7 @@ impl Project {
     }
 
     /// Writes the project's files, the setup's and the secrets the start needs. The answer says
-    /// whether the setup, Robinauts' configuration, changed.
+    /// whether the setup, Robinauts' configuration or the flows, changed.
     pub fn write(&self, keys: &Keys, setup: &Setup) -> std::io::Result<bool> {
         self.folder.ensure()?;
         let root = self.folder.compose();
@@ -214,9 +214,27 @@ impl Project {
             self.folder.write_secret("worker_token", "")?;
         }
         let config = root.join("robinauts.toml");
-        let changed =
+        let mut changed =
             fs::read_to_string(&config).ok().as_deref() != Some(setup.robinauts_toml.as_str());
         folder::write_file(&config, &setup.robinauts_toml, 0o644)?;
+        // The flows' folder, written anew: a file the setup folder dropped goes too.
+        let flows = root.join("flows");
+        let mut before = Vec::new();
+        if flows.is_dir() {
+            collect_files(&flows, &flows, &mut before)?;
+        }
+        before.sort();
+        changed |= before != setup.flows;
+        if flows.is_dir() {
+            fs::remove_dir_all(&flows)?;
+        }
+        for (path, bytes) in &setup.flows {
+            let path = flows.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&path, bytes)?;
+        }
         Ok(changed)
     }
 
@@ -293,6 +311,24 @@ impl Project {
         self.up_code().run(&logs, &mut *say)?;
         Ok(())
     }
+}
+
+/// Every file under `dir`, by its path from `root`, with its bytes.
+fn collect_files(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    into: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files(root, &path, into)?;
+        } else {
+            let inside = path.strip_prefix(root).map_err(std::io::Error::other)?;
+            into.push((inside.to_path_buf(), fs::read(&path)?));
+        }
+    }
+    Ok(())
 }
 
 /// What a start does about the code worker's token.
