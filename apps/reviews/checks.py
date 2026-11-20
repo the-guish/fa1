@@ -28,7 +28,9 @@ AGENT_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 """An agent's id, which is its file's name: as the app's own reader has it."""
 
 QUEUE = "default"
-"""The one queue FA1 declares: the handlers' (docs/specs/flows.md, "The format")."""
+"""The handlers' queue, which FA1's one worker serves (docs/specs/flows.md, "The format")."""
+QUEUES_FILE = "flows/queues.toml"
+"""neorc's file of the flows' other queues. In FA1 each is one a person answers."""
 
 HANDLERS_RULE = "handlers use the standard library alone"
 
@@ -198,6 +200,34 @@ def fixed_agent_and_model(
     return problems
 
 
+def queues(folder: Path, into: Result) -> set[str]:
+    """The queues a person answers: the external queues of `queues.toml`, as neorc reads it.
+    The server declares them at its start. `default` stays the handlers' queue, and FA1 has no
+    worker for another worker queue."""
+    from neorc_core import NeorcError, QueueKind
+    from neorc_core.flows import read_queues
+
+    try:
+        named = read_queues(folder)
+    except NeorcError as refused:
+        lines = getattr(refused, "problems", None) or [str(refused)]
+        into.problems += [f"flows/{line}" for line in lines]
+        return set()
+    external = set()
+    for name, kind in named.items():
+        here = f"{QUEUES_FILE} [queues.{name}]"
+        if name == QUEUE and kind is not QueueKind.WORKER:
+            into.problems.append(f"{here}: {QUEUE!r} is the handlers' queue, of kind worker")
+        elif name != QUEUE and kind is not QueueKind.EXTERNAL:
+            into.problems.append(
+                f"{here}: FA1 has one worker, on {QUEUE!r}: a queue a person answers has the"
+                " kind external"
+            )
+        elif name != QUEUE:
+            external.add(name)
+    return external
+
+
 def flows(
     tree: Path,
     deployed: Path | None,
@@ -205,8 +235,8 @@ def flows(
     known: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None,
 ) -> None:
     """The flows' folder: its settings and forms as Robinauts reads them, each flow as neorc
-    reads it, each step's handler, the agent and the model a step fixes, and each changed
-    flow's version. `known` holds the tree's models and agents, when they read."""
+    reads it, each step's queue and handler, the agent and the model a step fixes, and each
+    changed flow's version. `known` holds the tree's models and agents, when they read."""
     folder = tree / "flows"
     if table(tree, "flows/flows.toml", into) is None:
         return
@@ -261,6 +291,7 @@ def flows(
     if not code.is_dir():
         into.problems.append(f"flows/flows.toml code_location: no folder at {where}")
     modules = handlers(code, where, into)
+    answered = queues(folder, into)
     for path, definition in definitions.items():
         for task in definition.tasks():
             here = f"flows/{path.name}: {task.name}"
@@ -269,8 +300,14 @@ def flows(
                     f"{here}: fixed_params: {line}"
                     for line in fixed_agent_and_model(task.fixed_params, *known)
                 ]
+            if task.queue in answered:
+                # A person answers it: its handler is a text for them, and no function.
+                continue
             if task.queue != QUEUE:
-                into.problems.append(f"{here}: queue {task.queue!r}: FA1 has the queue {QUEUE!r}")
+                into.problems.append(
+                    f"{here}: queue {task.queue!r}: FA1 has the queue {QUEUE!r}, and the queues"
+                    f" a person answers, which {QUEUES_FILE} names"
+                )
                 continue
             module, _, function = task.handler.partition(":")
             if not function:
@@ -309,6 +346,8 @@ def flows(
     listed = ", ".join(f"{d.name} {d.version}" for d in definitions.values())
     into.summary.append(f"{len(definitions)} flows: {listed}" if definitions else "no flow")
     into.summary.append(f"{len(modules)} handler modules, read and not run")
+    if answered:
+        into.summary.append(f"queues a person answers: {', '.join(sorted(answered))}")
 
 
 def uploaded(path: Path) -> Any:

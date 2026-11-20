@@ -251,6 +251,22 @@ def fixed(agent: str, model: str) -> dict[str, str | None]:
     }
 
 
+def asked(kind: str | None, default: str | None = None) -> dict[str, str | None]:
+    """The files of a flow whose one step waits on the queue `editors`, with `queues.toml`
+    naming that queue with `kind`, and `default` with a kind of its own."""
+    files: dict[str, str | None] = {
+        "flows/asked.yaml": "name: asked\nversion: 0.1.0\ninputs:\n  question: string\n"
+        "output: tasks.answer\nsteps:\n  answer:\n    queue: editors\n"
+        "    handler: answer-the-question\n    params:\n      question: inputs.question\n"
+    }
+    named = {"editors": kind, "default": default}
+    if any(named.values()):
+        files["flows/queues.toml"] = "".join(
+            f'[queues.{name}]\nkind = "{held}"\n' for name, held in named.items() if held
+        )
+    return files
+
+
 def test_a_branch_the_review_app_does_not_take(world: World) -> None:
     with pytest.raises(NotFound, match="no branch"):
         world.store.submit("none", "proposals/none", "None")
@@ -272,6 +288,12 @@ def test_a_branch_the_review_app_does_not_take(world: World) -> None:
         ({"agents/helper.toml": HELPER.replace("sonnet", "gpt")}, "gpt is not in models.toml"),
         ({"agents/helper.toml": HELPER + 'tools = ["shell"]\n'}, "tool 'shell'"),
         ({"models.toml": "[elsewhere]\n"}, "models.toml: elsewhere"),
+        # A step on a queue that queues.toml lacks, and a file that names more than the
+        # queues a person answers.
+        (asked(None), "queue 'editors': FA1 has the queue 'default'"),
+        (asked("worker"), "FA1 has one worker, on 'default'"),
+        (asked("external", default="external"), "'default' is the handlers' queue"),
+        (asked("sometimes"), "flows/queues.toml [queues.editors]"),
         # A step that fixes its agent and model names a pair the server holds.
         (fixed("claude-code", "sonnet"), "model 'sonnet' is not a model of the agent 'claude-code'"),
         (fixed("claude-code", "gpt"), "model 'gpt' is not in models.toml"),
@@ -304,6 +326,11 @@ def test_a_changed_flow_needs_a_higher_version_than_the_one_that_runs(world: Wor
     world.commit({"flows/hello.yaml": changed.replace("version: 0.1.0", "version: 0.1.1")})
     made = world.store.submit("flow", "proposals/flow", "Flow")
     assert "hello 0.1.1" in made["summary"][1]
+
+    # A step on a queue a person answers is taken: its handler is a text, and no function.
+    world.branch("proposals/asked", asked("external"))
+    made = world.store.submit("asked", "proposals/asked", "Asked")
+    assert made["summary"][-1] == "queues a person answers: editors"
 
     # A step that fixes an agent and one of that agent's models is taken.
     world.branch("proposals/fixed", fixed("claude-code", "cc-sonnet"))

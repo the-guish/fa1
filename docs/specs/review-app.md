@@ -120,7 +120,7 @@ The checks read the setup folder's files, and run none of them.
 | the models and the agents fit FA1's providers, tool servers and workers | Robinauts' own check of its configuration |
 | each flow, and the flows as a set | neorc's own loader |
 | each form fits its flow, and `flows.toml` its keys | Robinauts' own checks |
-| each step is on the queue `default`, and names a handler that a module of `handlers/` has | FA1 |
+| each step is on the queue `default`, and names a handler that a module of `handlers/` has; or on an external queue of `queues.toml`, which a person answers | FA1 |
 | a step that fixes `agent` or `model` in `fixed_params` names an agent of `agents/`, and a model that agent has | FA1 |
 | each handler module is Python, and imports the standard library and its neighbours alone | FA1 |
 | a changed flow has a higher version than the flow that runs | FA1 |

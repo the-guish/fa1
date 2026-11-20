@@ -81,6 +81,9 @@ Robinauts' and neorc's own, unchanged ([knowledge/flows.md](../../setup-starter/
   `exit_condition`.
 - `flows/<name>.form.toml`: Robinauts' form that starts the flow.
 - `flows/handlers/<module>.py`: the handlers, with the standard library alone.
+- `flows/queues.toml`: neorc's file of the queues a person answers, each of kind `external`. A
+  step on such a queue waits for the person, who answers it under Queues in neorc's screens. The
+  step may name a form, a JSON file beside the flow.
 - `flows/flows.toml`: `code_location = "handlers"`, and the `[repositories]` a code task may
   name.
 
@@ -121,8 +124,6 @@ A flow's `version` rises at each change. The server keeps the first content of e
 
 ## Not possible yet
 
-- A human approval in the middle of a flow: Robinauts declares no external queue. The person
-  acts on the pull request on GitHub instead.
 - A trial run of a new handler in the control plane before its review. The checks read a
   handler without running it, and a designer on Claude Code runs a handler's own logic in its
   directory at most.
