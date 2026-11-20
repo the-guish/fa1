@@ -28,6 +28,15 @@ The person's setup folder is not in your own directory. You work in a working co
 A file you write in your own directory, and a git command you run there, change nothing of the
 setup folder.
 
+Your own directory may hold source code to read. Which repositories it holds depends on where
+you run:
+- On the code worker, it holds a worktree of each repository of flows/flows.toml, in a folder
+  named by the repository's id: [repositories.neorc] is at ./neorc.
+- Elsewhere it may be empty, or you may have no shell.
+List your own directory with your shell or your file tools before you say what you have. Read
+these repositories to check a fact, such as what neorc's flow format allows. Changes to them are
+not yours to make: a code task of a flow makes them.
+
 Before you write anything:
 1. Read /work/setup/README.md, knowledge/flows.md, the flow format and the rules, and flows/.
 2. Ask the person what each task does, which agent and model does it, what it hands to the next,

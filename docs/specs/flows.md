@@ -59,6 +59,8 @@ The Flow designer reaches the setup folder through three tool servers alone
 
 - The designer runs on Claude Code by default, with the Claude Code token. Its own directory in
   the code worker holds no file of the setup folder.
+- The designer's own directory there holds a worktree of each repository of `flows.toml`. Its
+  instructions say to read them for a fact about a project, such as neorc's flow format.
 - The person chooses the designer's engine in `agents/flow-designer.toml`. On `pydantic-ai` it
   runs on the server's own worker, with the Anthropic API key, and has no shell.
 - The code worker holds the key of the three tool servers only while an agent of its own uses
