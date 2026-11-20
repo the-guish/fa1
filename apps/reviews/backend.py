@@ -81,10 +81,10 @@ CREATE TABLE changelists (
     closed_at TEXT
 ) STRICT;
 """
-BEFORE = ("files", "baselines", "changelists", "folders")
-"""The tables of the schema versions 1 and 2. At version 1 a changelist held copies of files, and
-at version 2 its commit was in a repository of the review app's own. No release had them, so a
-file at either version starts again."""
+BEFORE = ("reviews", "files", "baselines", "changelists", "folders")
+"""The tables of the schema versions 1 and 2. At version 1 the file held a list of reviews, or
+changelists with copies of files, and at version 2 a changelist's commit was in a repository of
+the review app's own. No release had them, so a file at either version starts again."""
 
 BUSY_SECONDS = 10.0
 """How long a statement waits for a lock, as Robinauts' own file does."""
@@ -144,6 +144,10 @@ GIT_SETTINGS = (
 )
 """What git is told on each command, over the setup folder's own settings: no program the
 folder's settings name runs in the control plane."""
+
+
+class ReviewsError(Exception):
+    """A file of records that reviews refuses. oneberth ends the start with its sentence."""
 
 
 class Invalid(ValueError):
@@ -284,23 +288,43 @@ class Reviews:
     # The store.
 
     def set_up(self) -> None:
-        """Makes the file and its schema, or checks the version of the file found."""
+        """Makes the file and its schema, or checks the version of the file found.
+
+        The tables and the version are one transaction. A start that is cut between the two
+        leaves the file as it was, and the next start makes it again."""
         self.file.parent.mkdir(parents=True, exist_ok=True)
         self.home.mkdir(exist_ok=True)
-        with closing(self.connect()) as connection:
+        # Python's own mode opens no transaction for a `CREATE TABLE`, so this connection opens
+        # its transaction itself.
+        with closing(sqlite3.connect(self.file, timeout=BUSY_SECONDS, isolation_level=None)) as (
+            connection
+        ):
             connection.execute("PRAGMA journal_mode = WAL")
-            found = connection.execute("PRAGMA user_version").fetchone()[0]
-            if found < SCHEMA_VERSION:
-                with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                found = connection.execute("PRAGMA user_version").fetchone()[0]
+                if found == 0:
+                    rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                    held = sorted(row[0] for row in rows)
+                    if held:
+                        raise ReviewsError(
+                            f"{self.file} holds tables and no schema version ({', '.join(held)}):"
+                            " this build of reviews did not make it. Move it away and start again"
+                        )
+                if found < SCHEMA_VERSION:
                     for old in BEFORE:
                         connection.execute(f"DROP TABLE IF EXISTS {old}")
-                    connection.executescript(SCHEMA)
+                    connection.execute(SCHEMA)
                     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            elif found != SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"{self.file} is at schema version {found}, and this build of reviews needs"
-                    f" {SCHEMA_VERSION}"
-                )
+                elif found != SCHEMA_VERSION:
+                    raise ReviewsError(
+                        f"{self.file} is at schema version {found}, and this build of reviews"
+                        f" needs {SCHEMA_VERSION}"
+                    )
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
         # The repository the review app kept for itself, before it used the setup folder's.
         shutil.rmtree(self.home / "setup.git", ignore_errors=True)
         # A changelist named outside the branches becomes a branch.

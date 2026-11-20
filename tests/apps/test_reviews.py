@@ -1,5 +1,7 @@
 """The review app, without Docker (docs/specs/review-app.md): a setup folder, which is the
-review app's repository, and a working copy as the tool servers hold it, on real git.
+review app's repository, and a working copy as the tool servers hold it, on real git. Its file
+of records is made and checked on real SQLite files, and FA1's host, `apps/backend.py`, starts
+as a real process (docs/specs/apps.md).
 
 Needs Robinauts at the pinned commit, with neorc and oneberth, and git: tests/apps/run.sh
 runs these with them.
@@ -10,11 +12,16 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -24,11 +31,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps"))
 
 from reviews.backend import (  # noqa: E402
+    SCHEMA_VERSION,
     Conflict,
     Invalid,
     NotFound,
     Refused,
     Reviews,
+    ReviewsError,
     reviews,
     snapshot,
 )
@@ -398,6 +407,86 @@ def test_a_changelist_starts_from_the_commit_the_setup_folder_is_at(world: World
         empty.submit("stale", "proposals/stale", "Stale")
 
 
+# The file of records, on real SQLite files.
+
+
+def version_of(file: Path) -> int:
+    with closing(sqlite3.connect(file)) as connection:
+        return int(connection.execute("PRAGMA user_version").fetchone()[0])
+
+
+def tables_of(file: Path) -> list[str]:
+    with closing(sqlite3.connect(file)) as connection:
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        return sorted(row[0] for row in rows)
+
+
+@pytest.fixture
+def fresh(tmp_path: Path) -> Reviews:
+    """A review app with no file yet, on a setup folder with one commit."""
+    setup = tmp_path / "setup"
+    setup.mkdir()
+    git(setup, "init", "--quiet", "--initial-branch", "trunk")
+    git(setup, "commit", "--quiet", "--allow-empty", "--message", "One")
+    return Reviews(tmp_path / "data", work=tmp_path / "work", setup=setup)
+
+
+def test_a_first_start_makes_the_file_and_a_later_start_keeps_its_rows(fresh: Reviews) -> None:
+    fresh.set_up()
+    assert tables_of(fresh.file) == ["changelists"]
+    assert version_of(fresh.file) == SCHEMA_VERSION
+    with closing(sqlite3.connect(fresh.file)) as connection, connection:
+        connection.execute(
+            "INSERT INTO changelists VALUES"
+            " ('one', 'b', 'c', 'm', 'One', '', '[]', 'rejected', 't', 't', 't')"
+        )
+    fresh.set_up()
+    assert [c["name"] for c in fresh.changelists("closed")] == ["one"]
+
+
+def test_a_start_that_ends_after_the_table_leaves_no_table(
+    fresh: Reviews, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The version's statement fails, as a start that is cut between the two statements.
+    import reviews.backend as backend
+
+    class NoNumber(int):
+        def __format__(self, spec: str) -> str:
+            return "no number"
+
+    with monkeypatch.context() as cut:
+        cut.setattr(backend, "SCHEMA_VERSION", NoNumber(SCHEMA_VERSION))
+        with pytest.raises(sqlite3.OperationalError):
+            fresh.set_up()
+    assert tables_of(fresh.file) == [] and version_of(fresh.file) == 0
+    fresh.set_up()
+    assert tables_of(fresh.file) == ["changelists"]
+
+
+def test_a_file_of_a_later_version_is_refused_in_reviews_own_words(fresh: Reviews) -> None:
+    fresh.file.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(fresh.file)) as connection:
+        connection.execute("PRAGMA user_version = 7")
+    with pytest.raises(ReviewsError) as refused:
+        fresh.set_up()
+    assert str(refused.value) == (
+        f"{fresh.file} is at schema version 7, and this build of reviews needs {SCHEMA_VERSION}"
+    )
+
+
+def test_a_file_with_tables_and_no_version_is_refused_and_kept(fresh: Reviews) -> None:
+    fresh.file.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(fresh.file)) as connection:
+        connection.execute("CREATE TABLE notes (x)")
+    with pytest.raises(ReviewsError) as refused:
+        fresh.set_up()
+    assert str(refused.value) == (
+        f"{fresh.file} holds tables and no schema version (notes): this build of reviews"
+        " did not make it. Move it away and start again"
+    )
+    assert tables_of(fresh.file) == ["notes"]
+
+
 @pytest.mark.parametrize("version", [1, 2])
 def test_a_file_of_an_earlier_schema_starts_again(tmp_path: Path, version: int) -> None:
     data = tmp_path / "data"
@@ -424,6 +513,106 @@ def test_a_file_of_an_earlier_schema_starts_again(tmp_path: Path, version: int) 
         "refs/heads/trunk",
     ]
     store.set_up()
+
+
+# FA1's host, `apps/backend.py`, started as the image starts it.
+
+
+def status_of(url: str) -> int:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as answer:
+            return int(answer.status)
+    except urllib.error.HTTPError as refused:
+        return refused.code
+
+
+@pytest.fixture
+def host(tmp_path: Path) -> tuple[list[str], dict[str, str], Path, int]:
+    """The host's command and environment, its data directory and its port."""
+    if not (ROOT / "apps" / "dist" / "index.html").is_file():
+        pytest.skip("the interface is not built: tests/apps/run.sh builds it before these")
+    data = tmp_path / "data"
+    data.mkdir()
+    config = tmp_path / "robinauts.toml"
+    config.write_text("")
+    setup = tmp_path / "setup"
+    setup.mkdir()
+    git(setup, "init", "--quiet")
+    environment = {
+        **os.environ,
+        "ROBINAUTS_CONFIG": str(config),
+        "ROBINAUTS_DATA_DIR": str(data),
+        "REVIEWS_WORK": str(tmp_path / "work"),
+        "REVIEWS_SETUP": str(setup),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for variable in ("ROBINAUTS_DATABASE_URL", "ONEBERTH_CONFIG", "ROBINAUTS_FLOWS_DIR"):
+        environment.pop(variable, None)
+    port = free_port()
+    command = [sys.executable, str(ROOT / "apps" / "backend.py"), "--port", str(port)]
+    command += ["--worker-port", str(free_port())]
+    return command, environment, data, port
+
+
+def test_the_host_serves_its_three_applications_and_keeps_reviews_file(host) -> None:
+    command, environment, data, port = host
+    running = subprocess.Popen(
+        command,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline and running.poll() is None:
+            try:
+                if status_of(f"{base}/health") == 200:
+                    break
+            except OSError:
+                time.sleep(0.2)
+        assert running.poll() is None, "the host ended before it served"
+        assert status_of(f"{base}/health") == 200
+        # Each application answers under its name, and asks for a session.
+        for path in ("/robinauts/api/conversations", "/neorc/flows", "/reviews/api/changelists"):
+            assert status_of(base + path) == 401, path
+    finally:
+        running.send_signal(signal.SIGTERM)
+        _, said = running.communicate(timeout=60)
+    assert running.returncode == 0, said.decode()[-2000:]
+    assert sorted(file.name for file in data.glob("*.db")) == [
+        "neorc.db",
+        "oneberth.db",
+        "reviews.db",
+        "robinauts.db",
+    ]
+
+
+def test_a_start_with_no_configuration_named_says_one_line(host) -> None:
+    command, environment, _, _ = host
+    del environment["ROBINAUTS_CONFIG"]
+    ended = subprocess.run(
+        command, env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=90
+    )
+    assert ended.returncode == 1
+    said = ended.stderr.decode().strip().splitlines()
+    assert len(said) == 1 and said[0].startswith("ROBINAUTS_CONFIG"), said
+
+
+def test_a_refusal_of_reviews_is_the_last_line_with_its_sentence_alone(host) -> None:
+    command, environment, data, _ = host
+    file = data / "reviews.db"
+    with closing(sqlite3.connect(file)) as connection:
+        connection.execute("PRAGMA user_version = 7")
+    ended = subprocess.run(
+        command, env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=90
+    )
+    assert ended.returncode == 1
+    assert ended.stderr.decode().strip().splitlines()[-1] == (
+        f"component reviews failed to start: {file} is at schema version 7, and this build"
+        f" of reviews needs {SCHEMA_VERSION}"
+    )
 
 
 # The API, composed on oneberth as backend.py composes it, and the designer's tools.
