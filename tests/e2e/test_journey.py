@@ -303,6 +303,10 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         assert docker("exec", container, "id", "-u").strip() == owner, container
     assert docker("exec", "fa1-control-1", "git", "-C", "/setup", "rev-parse", "HEAD").strip() == head
     assert working_copy_main() == head
+    # The code worker reads the flows' settings, whose repositories a code task names.
+    assert docker(
+        "exec", "fa1-code-1", "sh", "-c", 'cat "$ROBINAUTS_FLOWS_DIR/flows.toml"'
+    ) == (SETUP / "flows" / "flows.toml").read_text()
     # The starter's Flow designer runs on the code worker, so that worker holds the key of the
     # designer's tool servers. No agent of its own uses the files tool, so it holds no key of it.
     setup_key = (HOME / "secrets" / "setup_key").read_text().strip()

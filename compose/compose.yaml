@@ -98,6 +98,9 @@ services:
       ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
       ROBINAUTS_WORKER_NAME: claude
       ROBINAUTS_WORKER_BROKER_URL: http://127.0.0.1:8421/robinauts
+      # The flows' settings, as the server reads them: their [repositories] are the ones a
+      # conversation gets a worktree of, and the ones a code task may name.
+      ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
       ONEBERTH_TOKEN_FILE: /run/secrets/worker_token
       ROBINAUTS_CLAUDE_AUTH: personal
       ROBINAUTS_CLAUDE_PERMISSION_MODE: bypassPermissions
@@ -109,6 +112,7 @@ services:
     secrets: [worker_token]
     volumes:
       - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - ./flows:/etc/fa1/flows:ro
       - code-claude:/var/lib/claude
       - code-workspaces:/workspace
     restart: unless-stopped
