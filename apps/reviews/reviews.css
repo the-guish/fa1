@@ -53,6 +53,12 @@
   background-color: var(--panel);
 }
 
+/* Each part keeps its own height, so a long changelist scrolls the panel. A file's panel hides
+   its overflow, and would shrink to the panel's height otherwise. */
+.reviews-main > * {
+  flex-shrink: 0;
+}
+
 .reviews-header {
   display: flex;
   align-items: center;
