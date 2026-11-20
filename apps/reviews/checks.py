@@ -174,9 +174,39 @@ def handlers(code: Path, where: str, into: Result) -> dict[str, set[str]]:
     return found
 
 
-def flows(tree: Path, deployed: Path | None, into: Result) -> None:
+def fixed_agent_and_model(
+    fixed: Mapping[str, Any], models: Mapping[str, Any], agents: Mapping[str, Any]
+) -> list[str]:
+    """What is wrong with the agent and the model a step fixes, in `fixed_params`: Robinauts'
+    handlers send both as ids, and the server refuses a pair it does not hold."""
+    problems = []
+    agent, model = fixed.get("agent"), fixed.get("model")
+    if isinstance(agent, str) and agent not in agents:
+        known = ", ".join(sorted(agents))
+        problems.append(f"agent {agent!r} is not an agent of agents/ ({known})")
+    if isinstance(model, str) and model not in models:
+        known = ", ".join(sorted(models))
+        problems.append(f"model {model!r} is not in models.toml ({known})")
+    elif isinstance(model, str) and isinstance(agent, str) and agent in agents:
+        allowed = agents[agent].get("models")
+        allowed = [m for m in allowed if isinstance(m, str)] if isinstance(allowed, list) else []
+        if model not in allowed:
+            problems.append(
+                f"model {model!r} is not a model of the agent {agent!r}"
+                f" ({', '.join(allowed) or 'none'})"
+            )
+    return problems
+
+
+def flows(
+    tree: Path,
+    deployed: Path | None,
+    into: Result,
+    known: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None,
+) -> None:
     """The flows' folder: its settings and forms as Robinauts reads them, each flow as neorc
-    reads it, each step's handler, and each changed flow's version."""
+    reads it, each step's handler, the agent and the model a step fixes, and each changed
+    flow's version. `known` holds the tree's models and agents, when they read."""
     folder = tree / "flows"
     if table(tree, "flows/flows.toml", into) is None:
         return
@@ -234,6 +264,11 @@ def flows(tree: Path, deployed: Path | None, into: Result) -> None:
     for path, definition in definitions.items():
         for task in definition.tasks():
             here = f"flows/{path.name}: {task.name}"
+            if known is not None:
+                into.problems += [
+                    f"{here}: fixed_params: {line}"
+                    for line in fixed_agent_and_model(task.fixed_params, *known)
+                ]
             if task.queue != QUEUE:
                 into.problems.append(f"{here}: queue {task.queue!r}: FA1 has the queue {QUEUE!r}")
                 continue
@@ -295,7 +330,7 @@ def check(tree: Path, config: Path | None, deployed_flows: Path | None) -> Resul
         models, agents = found
         configuration(models, agents, config, result)
         result.summary.insert(0, f"{len(agents)} agents, {len(models)} models")
-    flows(tree, deployed_flows, result)
+    flows(tree, deployed_flows, result, found)
     return result
 
 
