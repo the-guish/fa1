@@ -1,0 +1,5 @@
+# What a developer's own build leaves here: the image builds each of them itself.
+node_modules
+dist
+vendor
+__pycache__

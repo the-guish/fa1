@@ -1,0 +1,29 @@
+name: apps
+
+# FA1's applications and its host of them, outside Docker: the interface's build with its type
+# check, and the backend's tests (tests/apps/run.sh).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  apps:
+    name: the applications, outside Docker
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # The image of `control` builds the interface on Node.js 24, and installs with uv 0.12.6.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.6"
+      - run: tests/apps/run.sh

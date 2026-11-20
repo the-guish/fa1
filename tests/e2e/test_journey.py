@@ -1,7 +1,8 @@
 """The person's journey through FA1 in mode 2, on the real app and a real Docker engine.
 
 From a fresh folder: the welcome screen, the checks, the keys, the start, a second start while
-everything runs, a stop and a start, Robinauts signed in in the app tab of the one window, a reset of the code worker, a stop, and the removal of
+everything runs, a stop and a start, Robinauts signed in in the app tab of the one window, FA1's
+own application on its rail, a reset of the code worker, a stop, and the removal of
 everything. WebDriver sees each webview of the window as a window handle: the admin screens,
 the bar, and Robinauts. The
 Claude Code token is not a real one: the code worker joins the control plane with it, and no
@@ -267,6 +268,26 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     finished = run_state(driver)
     assert finished["status"] == "succeeded", finished
     assert finished["output"] == "Hello, Ada", finished
+
+    # Reviews, FA1's own application: on the rail below neorc, with its one panel, its API
+    # behind the same sign-in, and its records beside the control plane's.
+    on_rail = "nav[aria-label=Applications] a[data-app]"
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, on_rail))
+    rail = [a.get_attribute("data-app") for a in driver.find_elements(By.CSS_SELECTOR, on_rail)]
+    assert rail == ["robinauts", "neorc", "reviews"]
+    press(driver, "a[data-app=reviews]")
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, ".reviews-panel"))
+    assert driver.find_element(By.CSS_SELECTOR, ".reviews-panel").text == "something to review"
+    reviews = driver.execute_async_script(
+        "const done = arguments[arguments.length - 1];"
+        "fetch('/reviews/api/reviews').then(async r => done([r.status, await r.json()]),"
+        " e => done([0, String(e)]));"
+    )
+    assert reviews == [200, {"items": []}], reviews
+    assert "reviews/user" in session["roles"]
+    data = docker("exec", "fa1-control-1", "ls", "/var/lib/robinauts/data").split()
+    assert "reviews.db" in data, data
+    press(driver, "a[data-app=robinauts]")
 
     # Refresh: the setup folder pulls a new agent from its remote, and Robinauts serves it.
     remote = HOME.parent / "setup-remote.git"
