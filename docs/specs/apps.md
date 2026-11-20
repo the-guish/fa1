@@ -70,14 +70,18 @@ anew.
 - Robinauts' build gates read Robinauts' own bundle. FA1's bundle has no licence gate, no size
   budget and no audit yet.
 
-To move the lock with the pin, in a checkout of Robinauts at the pinned commit:
+To move the lock with the pin, in a checkout of Robinauts at the pinned commit, with the npm
+of Node.js 24, the image's:
 
 ```sh
 apps/vendor.sh <the checkout>
 cp <the checkout>/frontend/package-lock.json apps/package-lock.json
-# drop the three node_modules/@*/ui entries from the copy, then:
+# drop the two node_modules/@*/ui entries from the copy, then:
 (cd apps && npm install --package-lock-only)
 ```
+
+npm 11 drops every package FA1's bundle leaves out. npm 10 keeps two of them, `@types/node`
+and `undici-types`.
 
 ## Records
 
