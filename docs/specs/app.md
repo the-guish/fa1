@@ -22,6 +22,14 @@ its screens.
 
 The app also speaks HTTP to the control plane on `127.0.0.1` ([core.md](core.md)).
 
+The app runs git on the setup folder, in every mode ([setup-folder.md](setup-folder.md)):
+
+| action | git |
+|---|---|
+| make a new setup folder | `git init`, `git add --all`, `git commit`: the starter |
+| read its HEAD | `git rev-parse HEAD` |
+| pull its upstream | `git status`, `git pull --ff-only` |
+
 ## The window
 
 The app has one window, so the system's window switcher shows it once. The window holds three
@@ -102,7 +110,9 @@ as `~/bin`.
 
 ## Tests
 
-- The unit tests cover the pure functions of the core, with rows of inputs and outputs.
+- The unit tests cover the pure functions of the core, with rows of inputs and outputs. One
+  runs the setup folder's git actions on real git: the starter's commit, the folder's HEAD and
+  its owner.
 - The journey in `tests/e2e/` drives the real app and a real Docker engine through WebDriver. It
   walks the screens from a fresh folder to its removal. It runs on Linux, by hand:
   `tests/e2e/run.sh`.

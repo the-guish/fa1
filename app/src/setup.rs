@@ -75,6 +75,9 @@ const STARTER: &[(&str, &str)] = &[
 /// The providers a model of the setup folder may name: FA1's.
 const PROVIDERS: &[&str] = &["anthropic", "claude-code"];
 
+/// The worker of the code container, as FA1's fixed part names it.
+const CODE_WORKER: &str = "claude";
+
 /// What FA1 deploys from a setup folder.
 #[derive(Debug, PartialEq)]
 pub struct Setup {
@@ -84,6 +87,29 @@ pub struct Setup {
     pub flows: Vec<(PathBuf, Vec<u8>)>,
     pub git_name: String,
     pub git_email: String,
+    /// The variables that hold the keys the code worker needs: those of the tool servers its
+    /// agents use (`code_secrets`).
+    pub code_secrets: Vec<String>,
+}
+
+/// The variables that hold the keys of the tool servers the code worker's agents use. A worker
+/// reads a tool server's key from its own environment, so an agent of the code worker reaches a
+/// keyed server only with that key in the code container. `base` is FA1's fixed part, whose
+/// tool servers name their variable in `secret_env`. `agents` are the setup folder's, by id.
+pub fn code_secrets(base: &toml::Table, agents: &toml::Table) -> Vec<String> {
+    let servers = base.get("tool_servers").and_then(toml::Value::as_table);
+    let mut found: Vec<String> = agents
+        .values()
+        .filter(|agent| agent.get("worker").and_then(toml::Value::as_str) == Some(CODE_WORKER))
+        .filter_map(|agent| agent.get("tools").and_then(toml::Value::as_array))
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .filter_map(|tool| servers?.get(tool)?.get("secret_env")?.as_str())
+        .map(str::to_string)
+        .collect();
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// Makes `folder` the setup folder: refuses one inside the app's folder `app_root`, makes it
@@ -129,7 +155,77 @@ pub fn choose(folder: &Path, app_root: &Path, logs: &Path) -> Result<(), String>
         .arg(folder.to_string_lossy())
         .run(logs, |_| {})?;
     }
+    if empty {
+        // The starter is FA1's own writing, so its commit is FA1's. A changelist starts from
+        // a commit (docs/specs/review-app.md).
+        let at = folder.to_string_lossy().to_string();
+        Action::new("stage the starter", "git", &["-C", &at, "add", "--all"]).run(logs, |_| {})?;
+        Action::new(
+            "commit the starter",
+            "git",
+            &[
+                "-C",
+                &at,
+                "-c",
+                "user.name=FA1",
+                "-c",
+                "user.email=fa1@localhost",
+                "commit",
+                "--quiet",
+                "--message",
+                "The starter",
+            ],
+        )
+        .run(logs, |_| {})?;
+    }
     Ok(())
+}
+
+/// The commit the setup folder is at, "" for a folder with no commit yet. The review app starts
+/// each changelist from it (docs/specs/review-app.md, "Main").
+pub fn head(folder: &Path, logs: &Path) -> String {
+    let at = folder.to_string_lossy().to_string();
+    Action::new(
+        "read the setup folder's HEAD",
+        "git",
+        &[
+            "-C",
+            &at,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "HEAD^{commit}",
+        ],
+    )
+    .run(logs, |_| {})
+    .map(|printed| printed.trim().to_string())
+    .unwrap_or_default()
+}
+
+/// The user and the group that own `folder`. The services that reach the setup folder run as
+/// that user, so the files they write keep the folder's owner (docs/specs/containers.md).
+#[cfg(unix)]
+pub fn owner(folder: &Path) -> Option<(u32, u32)> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(folder).ok().map(|m| (m.uid(), m.gid()))
+}
+
+#[cfg(not(unix))]
+pub fn owner(_folder: &Path) -> Option<(u32, u32)> {
+    None
+}
+
+/// Whether the setup folder has changes of its own, not committed: the person is editing it by
+/// hand.
+pub fn has_changes(folder: &Path, logs: &Path, say: &mut dyn FnMut(&str)) -> Result<bool, String> {
+    let at = folder.to_string_lossy().to_string();
+    let changes = Action::new(
+        "look for changes in the setup folder",
+        "git",
+        &["-C", &at, "status", "--porcelain"],
+    )
+    .run(logs, &mut *say)?;
+    Ok(!changes.trim().is_empty())
 }
 
 /// Reads and checks the setup folder. The error names the file.
@@ -197,6 +293,8 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         return Err("agents/: no agent".to_string());
     }
 
+    let base: toml::Table = toml::from_str(BASE).map_err(|e| format!("FA1's fixed part: {e}"))?;
+    let code_secrets = code_secrets(&base, &agents);
     let mut added = toml::Table::new();
     added.insert("models".to_string(), models.into());
     added.insert("agents".to_string(), agents.into());
@@ -214,11 +312,12 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         flows,
         git_name,
         git_email,
+        code_secrets,
     })
 }
 
-/// Pulls the setup folder, fast-forward only, unless it has changes of its own or no upstream
-/// branch: then it is deployed as it is. The GitHub token goes through git's credential helper,
+/// Pulls the setup folder from its upstream branch, fast-forward only. A folder with no
+/// upstream branch is deployed as it is. The GitHub token goes through git's credential helper,
 /// in a variable the log never shows.
 pub fn pull(
     folder: &Path,
@@ -227,16 +326,6 @@ pub fn pull(
     say: &mut dyn FnMut(&str),
 ) -> Result<(), String> {
     let at = folder.to_string_lossy().to_string();
-    let changes = Action::new(
-        "look for changes in the setup folder",
-        "git",
-        &["-C", &at, "status", "--porcelain"],
-    )
-    .run(logs, &mut *say)?;
-    if !changes.trim().is_empty() {
-        say("The setup folder has changes of its own: it is deployed as it is, without a pull.");
-        return Ok(());
-    }
     let upstream = Action::new(
         "look for the setup folder's upstream branch",
         "git",
@@ -303,9 +392,59 @@ fn is_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{STARTER, read};
+    use super::{STARTER, choose, has_changes, head, owner, read};
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    /// git in `at`, as a person with a name; what it printed.
+    fn git(at: &Path, args: &[&str]) -> String {
+        let done = Command::new("git")
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            done.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        String::from_utf8_lossy(&done.stdout).trim().to_string()
+    }
+
+    /// A new setup folder on real git: the starter is one commit of FA1's, the folder's HEAD
+    /// and owner are read, and a change by hand shows.
+    #[test]
+    fn a_new_setup_folder_is_committed_and_its_head_and_owner_are_read() {
+        let root = std::env::temp_dir().join(format!("fa1-setup-test-head-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (folder, logs) = (root.join("setup"), root.join("logs"));
+        fs::create_dir_all(&logs).unwrap();
+        let mut say = |_: &str| {};
+
+        choose(&folder, &root.join("app"), &logs).unwrap();
+        assert_eq!(
+            git(&folder, &["log", "--format=%an: %s"]),
+            "FA1: The starter"
+        );
+        assert!(!has_changes(&folder, &logs, &mut say).unwrap());
+        assert_eq!(head(&folder, &logs), git(&folder, &["rev-parse", "HEAD"]));
+        #[cfg(unix)]
+        assert_eq!(owner(&folder), owner(&root));
+
+        fs::write(folder.join("README.md"), "mine\n").unwrap();
+        assert!(has_changes(&folder, &logs, &mut say).unwrap());
+
+        // A setup folder with no commit has no HEAD.
+        let bare = root.join("no-commit");
+        fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "-q"]);
+        assert_eq!(head(&bare, &logs), "");
+        assert_eq!(owner(&root.join("nowhere")), None);
+        let _ = fs::remove_dir_all(root);
+    }
 
     fn starter(at: &Path) {
         for (name, text) in STARTER {
@@ -340,6 +479,17 @@ mod tests {
             toml["agents"]["flow-designer"]["engine"].as_str(),
             Some("claude-code")
         );
+        // The designer runs on the code worker, which then needs the key of its tool servers,
+        // and no other.
+        assert_eq!(setup.code_secrets, ["FA1_SETUP_KEY"]);
+        // The designer's tools are tool servers of FA1's fixed part.
+        for tool in toml["agents"]["flow-designer"]["tools"].as_array().unwrap() {
+            let id = tool.as_str().unwrap();
+            assert!(
+                id == "sessions" || toml["tool_servers"].get(id).is_some(),
+                "{id}"
+            );
+        }
         assert_eq!(setup.git_name, "");
         let flows = String::from_utf8(
             setup
@@ -367,6 +517,39 @@ mod tests {
             assert!(paths.contains(&wanted.to_string()), "{wanted}: {paths:?}");
         }
         let _ = fs::remove_dir_all(at);
+    }
+
+    #[test]
+    fn the_code_worker_gets_the_keys_of_the_tool_servers_its_agents_use() {
+        let base: toml::Table = toml::from_str(super::BASE).unwrap();
+        // (the agents) -> the variables of the code worker
+        let cases: &[(&str, &[&str])] = &[
+            // The starter's designer, on the code worker.
+            (
+                "[d]\nworker = \"claude\"\ntools = [\"setup-files\", \"setup-git\", \"setup-review\", \"sessions\"]",
+                &["FA1_SETUP_KEY"],
+            ),
+            // The same designer on the server's own worker: the code worker holds no key.
+            (
+                "[d]\nengine = \"pydantic-ai\"\ntools = [\"setup-files\", \"setup-git\", \"setup-review\"]",
+                &[],
+            ),
+            // A coding agent given the files tool, beside an assistant that has it too.
+            (
+                "[c]\nworker = \"claude\"\ntools = [\"files\", \"fetch\"]\n[a]\ntools = [\"files\", \"setup-git\"]",
+                &["FA1_FILES_KEY"],
+            ),
+            // Both keys, each once; a tool without a key, and one FA1 does not have, add none.
+            (
+                "[c]\nworker = \"claude\"\ntools = [\"setup-git\", \"files\", \"todo\", \"nope\"]\n[d]\nworker = \"claude\"\ntools = [\"setup-files\"]",
+                &["FA1_FILES_KEY", "FA1_SETUP_KEY"],
+            ),
+            ("[c]\nworker = \"claude\"", &[]),
+        ];
+        for (agents, expected) in cases {
+            let agents: toml::Table = toml::from_str(agents).unwrap();
+            assert_eq!(super::code_secrets(&base, &agents), *expected, "{agents:?}");
+        }
     }
 
     #[test]

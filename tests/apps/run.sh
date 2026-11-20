@@ -4,12 +4,15 @@
 # `control` is built from it:
 #
 # 1. the interface: vendor.sh, `npm ci` from the lock, and the build with its type check;
-# 2. the backend: test_reviews.py, in Robinauts' environment as the image installs it.
+# 2. the backend: test_reviews.py, on real git, in Robinauts' environment as the image installs
+#    it, with pytest beside it.
 #
 #     tests/apps/run.sh                 fetches Robinauts at the pinned commit
 #     tests/apps/run.sh <a checkout>    reads Robinauts from that checkout
 #
-# Needs git, Node.js 24 with its npm, and uv. It writes apps/vendor, apps/node_modules and
+# FA1_APPS_BACKEND_ONLY=1 leaves the interface out, on a computer without Node.js.
+#
+# Needs git, uv, and Node.js 24 with its npm. It writes apps/vendor, apps/node_modules and
 # apps/dist, which git ignores.
 set -eu
 
@@ -41,10 +44,12 @@ else
 fi
 
 # The interface, as the image's first two stages build it.
-sh "$root/apps/vendor.sh" "$robinauts"
-(cd "$root/apps" && npm ci --no-audit --no-fund && npm run build)
+if [ -z "${FA1_APPS_BACKEND_ONLY:-}" ]; then
+    sh "$root/apps/vendor.sh" "$robinauts"
+    (cd "$root/apps" && npm ci --no-audit --no-fund && npm run build)
+fi
 
-# The backend, in the environment the image's last stage installs.
-UV_PROJECT_ENVIRONMENT="$work/venv" \
-    uv sync --quiet --locked --no-dev --project "$robinauts/backend"
-PYTHONDONTWRITEBYTECODE=1 "$work/venv/bin/python" -m unittest discover -s "$root/tests/apps"
+# The backend, in the environment the image's last stage installs, with pytest beside it.
+UV_PROJECT_ENVIRONMENT="$work/venv" PYTHONDONTWRITEBYTECODE=1 \
+    uv run --quiet --project "$robinauts/backend" --locked --no-dev --with pytest \
+    python -m pytest -q -p no:cacheprovider "$root/tests/apps"

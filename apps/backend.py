@@ -3,10 +3,13 @@ oneberth (docs/specs/apps.md). This file is the backend's list of applications. 
 rail's.
 
 Robinauts' parts read the environment as `robinauts start` does: ROBINAUTS_CONFIG,
-ROBINAUTS_DATA_DIR and ROBINAUTS_FLOWS_DIR. The launch secret is the first line of standard
-input. The front listener binds every address of the container, and a browser reaches it on
-the host's loopback. The worker listener is on the container's loopback, where the code worker
-reaches it (docs/specs/containers.md, "Network").
+ROBINAUTS_DATA_DIR and ROBINAUTS_FLOWS_DIR. The review app reads three more: REVIEWS_WORK, the
+designer's working copy of the setup folder; REVIEWS_SETUP, the person's setup folder, which
+the control plane mounts; and FA1_SETUP_KEY, the key of the designer's tools. The
+launch secret is the first line of standard input. The front listener binds every
+address of the container, and a browser reaches it on the host's loopback. The worker listener
+is on the container's loopback, where the code worker reaches it (docs/specs/containers.md,
+"Network").
 """
 
 from __future__ import annotations
@@ -30,6 +33,13 @@ NO_DATA_DIR = (
     "ROBINAUTS_DATA_DIR names no folder: the control plane keeps its records there, and so do"
     " FA1's applications"
 )
+NO_REVIEWS = (
+    "{} names no path: the review app reads the designer's working copy at REVIEWS_WORK, and"
+    " works in the person's setup folder at REVIEWS_SETUP"
+)
+TOOLS_PORT = 8422
+"""The port of the designer's two tools, on the control plane's loopback address
+(docs/specs/review-app.md, "The designer's tools")."""
 
 
 def main() -> int:
@@ -43,6 +53,21 @@ def main() -> int:
     if not data:
         print(NO_DATA_DIR, file=sys.stderr)
         return 1
+    for variable in ("REVIEWS_WORK", "REVIEWS_SETUP"):
+        if not os.environ.get(variable):
+            print(NO_REVIEWS.format(variable), file=sys.stderr)
+            return 1
+    config = os.environ.get("ROBINAUTS_CONFIG")
+    flows = os.environ.get("ROBINAUTS_FLOWS_DIR")
+    review = reviews(
+        Path(data),
+        work=Path(os.environ["REVIEWS_WORK"]),
+        setup=Path(os.environ["REVIEWS_SETUP"]),
+        config=Path(config) if config else None,
+        flows=Path(flows) if flows else None,
+        tools_key=os.environ.get("FA1_SETUP_KEY", ""),
+        tools_port=TOOLS_PORT,
+    )
     try:
         robinauts = robinauts_parts(
             os.environ, front=front, worker=worker, local=True, public_host="127.0.0.1"
@@ -52,7 +77,7 @@ def main() -> int:
         return 1
     logging.basicConfig(level=logging.INFO)
     composition = compose_app(
-        [*robinauts.components, reviews(Path(data))],
+        [*robinauts.components, review],
         config=robinauts.oneberth,
         store=robinauts.store,
         interface=INTERFACE,

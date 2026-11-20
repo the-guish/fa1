@@ -5,7 +5,7 @@ neorc: an icon on the rail of the App tab, and an API of its own on the control 
 
 | application | shows | keeps |
 |---|---|---|
-| `reviews` | one panel, a placeholder: "something to review" | `reviews.db`: one table, empty |
+| `reviews` | the changelists to review, and each one's changes side by side ([review-app.md](review-app.md)) | `reviews.db`, and the changelists' commits in `reviews/setup.git` |
 
 ## FA1 is the host
 
@@ -37,6 +37,9 @@ apps/
     <name>/
         backend.py               the API: a oneberth component, and the records
         index.tsx                the name, the title, the icon, the loader of the root component
+    reviews/
+        checks.py                the checks of a setup folder, a program of its own
+        tools.py                 the designer's two tools, an MCP server
     Dockerfile                   the image of `control`
     package.json, package-lock.json, vite.config.ts, tsconfig.json, index.html
                                  the interface's build
@@ -99,6 +102,10 @@ and `undici-types`.
   a file that holds tables and no version.
 - A refusal is an error of the application's own. oneberth ends the start with the
   application's name and its sentence.
+- The review app keeps each changelist's commit in the setup folder's repository.
+- The review app reads two paths of the environment. `REVIEWS_WORK` names the designer's
+  working copy, and `REVIEWS_SETUP` the person's setup folder
+  ([review-app.md](review-app.md), "The parts").
 
 ## What an application may use
 
@@ -106,9 +113,17 @@ and `undici-types`.
   TypeScript settings.
 - The API imports the standard library, FastAPI and oneberth. The control image holds all
   three.
+- A tool server of an application imports the MCP SDK and uvicorn, which Robinauts brings to the
+  control image. It listens on the loopback address of `control`, and asks for a key.
+- A program an application runs beside itself may import Robinauts and neorc. The review app's
+  checks are one: they call the functions Robinauts' start runs.
+- The control image holds git, which uv builds neorc and oneberth with. The review app runs it
+  on its own repository.
 - A stylesheet is plain CSS over oneberth's tokens. Its class names start with the
   application's name.
 - The local user holds every role a person may hold. An application declares one such role.
+- The app on the host reaches an application with a service token. The launch secret makes it,
+  for a role the application declares for it.
 
 ## Adding one
 
@@ -125,9 +140,12 @@ and `undici-types`.
   builds the interface with its type check, as the image's first two stages do. It runs
   `tests/apps/test_reviews.py` in the environment the image's last stage installs.
 - `test_reviews.py` makes and checks `reviews.db` on real files, and starts `backend.py` as a
-  process. CI runs the script on every pull request.
-- The journey finds Reviews on the rail below neorc, opens it, reads its panel, asks its API,
-  and finds `reviews.db` in the data directory.
+  process. It runs the review app on real git: a setup folder and a working copy. CI runs the
+  script on every pull request.
+- The journey finds Reviews on the rail below neorc. It plays the designer through the three
+  tool servers, opens the changelist on the Pending list, reads its change side by side, and
+  approves it. The approval puts the change in the setup folder. Robinauts serves it after a
+  Refresh.
 
 ## Open
 
