@@ -100,8 +100,25 @@ The model must be one of the agent's `models` in `agents/<agent>.toml`; add it t
 
 ## Running a flow
 
-- **On demand:** the flow's form in Robinauts (`<name>.form.toml`; a `lov` of `repo_branch`,
-  `agent` or `model` offers the setup's choices).
+- **On demand:** the flow's form in Robinauts (`<name>.form.toml`). A `lov` of `repo_branch`,
+  `agent` or `model` offers the setup's choices.
+- **A repository, its branch and a project:** `lov = "repository"` offers the repositories of
+  `flows.toml`. `lov = "branch"` with `of = "<the repository's input>"` offers that
+  repository's branches as its server has them now, and the person searches them as they type.
+  `lov = "project"` offers the person's projects in Robinauts. The run gets the repository's
+  id, the branch's name and the project's id.
+
+  ```toml
+  [inputs.repo]
+  lov = "repository"
+
+  [inputs.branch]
+  lov = "branch"
+  of = "repo"
+  ```
+
+  A repository's `branches` in `flows.toml` holds names or patterns: `["main", "release/*"]`.
+  A branch input offers those that match; `["*"]` offers every branch.
 - **On a schedule, or from a webhook:** not yet. Say so to the person; FA1 plans it.
 - **A person's answer in the middle:** a step on an external queue (below).
 
