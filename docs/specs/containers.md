@@ -61,9 +61,11 @@ Each service keeps its data in a named volume of the project:
 - `control` and `code` mount `robinauts.toml` of `compose/`, read-only. The app writes it from the
   setup folder at each start ([setup-folder.md](setup-folder.md)). A change recreates `control`
   and `code`, since both read it as they start.
-- `control` mounts one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`, which
-  `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup folder's
-  `flows/` at each start. A change recreates `control`.
+- `control` and `code` mount one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`,
+  which `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup
+  folder's `flows/` at each start. A change recreates both.
+- `code` reads `[repositories]` of `flows/flows.toml` there. A conversation of the code worker
+  gets a worktree of each repository, and a code task names one of them.
 
 ## The setup folder
 
