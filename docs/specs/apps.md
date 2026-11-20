@@ -106,8 +106,9 @@ and `undici-types`.
   `REVIEWS_ROOT` names it.
 - The review app keeps a git repository beside its file: `reviews/setup.git`, with `main` and
   each changelist's commit.
+- The review app keeps each changelist's commit in the setup folder's repository.
 - The review app reads two paths of the environment. `REVIEWS_WORK` names the designer's
-  working copy, and `REVIEWS_PUBLISHED` the bundle of the setup folder's HEAD
+  working copy, and `REVIEWS_SETUP` the person's setup folder
   ([review-app.md](review-app.md), "The parts").
 
 ## What an application may use
@@ -150,7 +151,7 @@ and `undici-types`.
   opens it on the Pending list, reads its change side by side, and approves it. The folder then
   holds the new version, and the data directory holds `reviews.db`.
 - `tests/apps/` holds an application's own tests, which run without Docker. The review app's
-  run on real git: a setup folder, its bundle, a working copy and the review app's repository.
+  run on real git: a setup folder and a working copy.
   `tests/apps/run.sh` runs them in Robinauts' environment, from a checkout at the pinned commit.
 - The journey finds Reviews on the rail below neorc. It plays the designer through the three
   tool servers, opens the changelist on the Pending list, reads its change side by side, and

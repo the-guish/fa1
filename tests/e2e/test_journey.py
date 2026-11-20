@@ -3,9 +3,9 @@
 From a fresh folder: the welcome screen, the checks, the keys, the start, a second start while
 everything runs, a stop and a start, Robinauts signed in in the app tab of the one window, FA1's
 own application on its rail, a change the designer proposes through its tool servers, the
-person's review and approval of it, a refresh that takes it to the setup folder, a reset of the
-code worker, a stop, and the removal of everything. WebDriver sees each webview of the window
-as a window handle: the admin screens, the bar, and Robinauts. The Claude Code token is not a
+person's review and approval of it, which puts it in the setup folder, a refresh that deploys
+it, a reset of the code worker, a stop, and the removal of everything. WebDriver sees each
+webview of the window as a window handle: the admin screens, the bar, and Robinauts. The Claude Code token is not a
 real one: the code worker joins the control plane with it, and no turn runs. The Flow designer's
 turn is played without its model.
 
@@ -169,6 +169,13 @@ def act(driver, selector: str, text: str, seconds: float) -> None:
     assert "failed:" not in new(driver), new(driver)[-3000:]
 
 
+def working_copy_main() -> str:
+    """The commit the designer's working copy has as main."""
+    return docker(
+        "exec", "fa1-setup-git-1", "git", "-C", "/work/setup", "rev-parse", "main"
+    ).strip()
+
+
 def started_at(container: str) -> str:
     return docker("inspect", "--format", "{{.State.StartedAt}}", container).strip()
 
@@ -229,7 +236,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     steps = [li.text for li in driver.find_elements(By.CSS_SELECTOR, "#plan li")]
     assert len(steps) == 10
     assert steps[0].startswith("read the setup folder")
-    assert steps[3].startswith("git -C ") and "bundle create" in steps[3]
+    assert steps[3].startswith("mount ") and "in the control plane" in steps[3]
     assert steps[4].endswith(f"{HOME}/compose/compose.yaml build")
 
     # Welcome: the setup folder. One inside the app's folder is refused; a new one gets the
@@ -288,10 +295,14 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
-    # The setup folder's HEAD is published for the review app and the designer's working copy.
-    published = HOME / "compose" / "setup"
-    assert (published / "main.bundle").is_file()
-    assert (published / "head").read_text() == git(SETUP, "rev-parse", "HEAD").strip()
+    # The control plane mounts the setup folder, and runs as the folder's owner. The designer's
+    # working copy starts at the folder's commit.
+    head = git(SETUP, "rev-parse", "HEAD").strip()
+    owner = str(SETUP.stat().st_uid)
+    for container in ("fa1-control-1", "fa1-setup-git-1", "fa1-setup-files-1"):
+        assert docker("exec", container, "id", "-u").strip() == owner, container
+    assert docker("exec", "fa1-control-1", "git", "-C", "/setup", "rev-parse", "HEAD").strip() == head
+    assert working_copy_main() == head
     # The starter's Flow designer runs on the code worker, so that worker holds the key of the
     # designer's tool servers. No agent of its own uses the files tool, so it holds no key of it.
     setup_key = (HOME / "secrets" / "setup_key").read_text().strip()
@@ -422,8 +433,19 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     approved = ".reviews-header .reviews-status[data-status=approved]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, approved))
     outcome = driver.find_element(By.CSS_SELECTOR, ".reviews-outcome")
-    assert outcome.get_attribute("data-applied") == "no" and "Refresh" in outcome.text
-    assert not (SETUP / "agents" / "reviewed.toml").exists()
+    assert outcome.get_attribute("data-applied") == "yes" and "Refresh" in outcome.text
+    # The approval put the designer's commit in the setup folder, as the folder's owner. The
+    # working copy's main follows. Robinauts serves the new agent only after a refresh.
+    reviewed = SETUP / "agents" / "reviewed.toml"
+    assert reviewed.read_text() == REVIEWED
+    assert reviewed.stat().st_uid == SETUP.stat().st_uid
+    assert (
+        git(SETUP, "log", "-1", "--format=%an: %s").strip()
+        == "Flow designer: Add the agent Reviewed"
+    )
+    assert git(SETUP, "status", "--porcelain") == ""
+    head = git(SETUP, "rev-parse", "HEAD").strip()
+    WebDriverWait(driver, 30).until(lambda d: working_copy_main() == head)
     press(driver, "[data-action=back]")
     closed_row = ".reviews-list tr[data-changelist=add-reviewed]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, closed_row))
@@ -454,19 +476,12 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         assert "items" in agents, agents
         return sorted(a["id"] for a in agents["items"])
 
-    # Refresh: the approved change reaches the setup folder as the designer's commit, FA1
-    # deploys it, and Robinauts serves the new agent. The review app sees it applied, and the
-    # working copy's main follows.
+    # Refresh: FA1 deploys the setup folder, and Robinauts serves the new agent. The review app
+    # still sees the change in the folder.
+    assert serving_again() == ["assistant", "claude-code", "flow-designer"]
     driver.switch_to.window(main)
-    before = len(log_text(driver))
     act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
-    assert "Applying the approved changes" in log_text(driver)[before:]
-    assert (SETUP / "agents" / "reviewed.toml").read_text() == REVIEWED
-    assert (
-        git(SETUP, "log", "-1", "--format=%an: %s").strip()
-        == "Flow designer: Add the agent Reviewed"
-    )
-    assert git(SETUP, "status", "--porcelain") == ""
+    assert git(SETUP, "rev-parse", "HEAD").strip() == head
     assert serving_again() == ["assistant", "claude-code", "flow-designer", "reviewed"]
     closed = driver.execute_async_script(
         "const done = arguments[arguments.length - 1];"
@@ -476,11 +491,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert [(c["name"], c["status"], c["applied"]) for c in closed["items"]] == [
         ("add-reviewed", "approved", True)
     ], closed
-    head = git(SETUP, "rev-parse", "HEAD").strip()
-    assert (
-        docker("exec", "fa1-setup-git-1", "git", "-C", "/work/setup", "rev-parse", "main").strip()
-        == head
-    )
+    assert working_copy_main() == head
 
     # Refresh again: the setup folder pulls a new agent from its remote, and Robinauts serves it.
     remote = HOME.parent / "setup-remote.git"
@@ -497,9 +508,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     git(other, "commit", "-q", "-m", "A helper")
     git(other, "push", "-q")
     driver.switch_to.window(main)
-    before = len(log_text(driver))
     act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
-    assert "No approved change waits" in log_text(driver)[before:]
     assert (SETUP / "agents" / "helper.toml").exists()
     # The refresh restarted the control plane, which ended the sign-in: the App tab signs in
     # again on its own.

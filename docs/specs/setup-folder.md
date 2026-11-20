@@ -90,23 +90,21 @@ FA1 reads the setup folder at each start and at each refresh:
    line, and keeps what runs.
 2. FA1 writes Robinauts' configuration (`robinauts.toml`) in `compose/`: FA1's fixed part,
    `compose/robinauts.base.toml`, then the folder's models and agents.
-3. FA1 publishes the folder's HEAD in `compose/`, as a git bundle. The review app and the
-   designer's working copy take it as `main` ([review-app.md](review-app.md)).
-4. When the setup changed, `control` and `code` start anew: both read it as they start.
+3. When the setup changed, `control` and `code` start anew: both read it as they start.
+
+`control` mounts the folder itself, for the review app ([review-app.md](review-app.md)). The
+review app and the designer's working copy take the folder's commit as `main`.
 
 The folder's `flows/` is deployed with the flows ([flows.md](flows.md)).
 
-**Refresh** is a button on the Status screen: it takes the approved changes into the setup
-folder, pulls it, then deploys it.
+**Refresh** is a button on the Status screen: it pulls the setup folder, then deploys it.
 
-- The approved changes are the changelists the person approved under Reviews. FA1 fetches them
-  from the review app as a git bundle, and fast-forwards the folder
-  ([review-app.md](review-app.md), "Applying").
-- A stopped control plane gives no approved change. The refresh says so, and goes on.
+- A changelist the person approved under Reviews is in the folder already
+  ([review-app.md](review-app.md), "Approval"). The refresh deploys it.
 - The pull is `git pull --ff-only` on the folder's current branch, with the GitHub token when the
   remote is on GitHub. The token goes through git's credential helper and never into the log.
-- A folder with uncommitted changes is deployed as it is, without the approved changes and
-  without a pull: the person is editing it by hand.
+- A folder with uncommitted changes is deployed as it is, without a pull: the person is editing
+  it by hand.
 - A pull that cannot fast-forward stops the refresh, and says so.
 - A refresh restarts `control` and `code` when the setup changed. A turn that runs then ends.
 - A restart of `control` ends the App tab's sign-in. After every start and refresh, an open App
@@ -114,8 +112,8 @@ folder, pulls it, then deploys it.
 
 ## Changing it through the agents
 
-An agent changes the setup folder in two ways. Each ends with the person's own yes, then
-Refresh.
+An agent changes the setup folder in two ways. Each needs the person's own yes, and runs after
+a Refresh.
 
 **On this computer**, through the Flow designer and the review app
 ([review-app.md](review-app.md)):
@@ -123,8 +121,9 @@ Refresh.
 1. The person asks the Flow designer for a change: a new agent, a flow, a page of knowledge.
 2. The designer writes the files on a branch of its working copy, checks them, and submits the
    branch as a changelist.
-3. The person reads the changelist under Reviews, and approves it.
-4. The person presses Refresh.
+3. The person reads the changelist under Reviews, and approves it. The approval puts the
+   change in the setup folder.
+4. The person presses Refresh, which deploys it.
 
 **On GitHub**, through a coding agent, which reaches GitHub with the person's token:
 

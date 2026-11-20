@@ -181,23 +181,11 @@ pub fn choose(folder: &Path, app_root: &Path, logs: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// The bundle of the setup folder's HEAD, in `compose/setup/`: what the review app and the
-/// designer's working copy take as `main` (docs/specs/review-app.md, "Main").
-pub const BUNDLE: &str = "main.bundle";
-/// The commit the bundle holds, beside it. The Compose project reads it as `FA1_SETUP_HEAD`.
-pub const HEAD: &str = "head";
-
-/// Publishes the setup folder's HEAD into `into`, as a git bundle and the commit's id, and
-/// answers the id. A setup folder with no commit publishes nothing, and answers "".
-pub fn publish(
-    folder: &Path,
-    into: &Path,
-    logs: &Path,
-    say: &mut dyn FnMut(&str),
-) -> Result<String, String> {
-    fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+/// The commit the setup folder is at, "" for a folder with no commit yet. The review app starts
+/// each changelist from it (docs/specs/review-app.md, "Main").
+pub fn head(folder: &Path, logs: &Path) -> String {
     let at = folder.to_string_lossy().to_string();
-    let head = Action::new(
+    Action::new(
         "read the setup folder's HEAD",
         "git",
         &[
@@ -211,75 +199,20 @@ pub fn publish(
     )
     .run(logs, |_| {})
     .map(|printed| printed.trim().to_string())
-    .unwrap_or_default();
-    if head.is_empty() {
-        say(
-            "The setup folder has no commit yet: commit it, and the Flow designer can propose changes.",
-        );
-        let _ = fs::remove_file(into.join(BUNDLE));
-        fs::write(into.join(HEAD), "").map_err(|e| e.to_string())?;
-        return Ok(head);
-    }
-    if fs::read_to_string(into.join(HEAD)).ok().as_deref() == Some(head.as_str())
-        && into.join(BUNDLE).is_file()
-    {
-        return Ok(head);
-    }
-    // Written beside the bundle, then moved onto it: a reader sees one bundle or the other.
-    let spare = into.join("main.bundle.new");
-    Action::new(
-        "publish the setup folder's HEAD",
-        "git",
-        &["-C", &at, "bundle", "create", "--quiet"],
-    )
-    .arg(spare.to_string_lossy())
-    .arg("HEAD")
-    .run(logs, &mut *say)?;
-    fs::rename(&spare, into.join(BUNDLE)).map_err(|e| e.to_string())?;
-    fs::write(into.join(HEAD), &head).map_err(|e| e.to_string())?;
-    Ok(head)
+    .unwrap_or_default()
 }
 
-/// The commit `publish` last wrote into `into`, "" for none.
-pub fn published(into: &Path) -> String {
-    fs::read_to_string(into.join(HEAD))
-        .map(|text| text.trim().to_string())
-        .unwrap_or_default()
+/// The user and the group that own `folder`. The services that reach the setup folder run as
+/// that user, so the files they write keep the folder's owner (docs/specs/containers.md).
+#[cfg(unix)]
+pub fn owner(folder: &Path) -> Option<(u32, u32)> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(folder).ok().map(|m| (m.uid(), m.gid()))
 }
 
-/// Takes the approved changelists in `bundle`, which the review app made, into the setup
-/// folder: a fetch of the bundle's `main`, then a fast-forward. git checks each object it
-/// fetches, and refuses a setup folder that has moved elsewhere.
-pub fn apply_approved(
-    folder: &Path,
-    bundle: &Path,
-    logs: &Path,
-    say: &mut dyn FnMut(&str),
-) -> Result<(), String> {
-    let at = folder.to_string_lossy().to_string();
-    Action::new(
-        "fetch the approved changes",
-        "git",
-        &[
-            "-C",
-            &at,
-            "-c",
-            "fetch.fsckObjects=true",
-            "fetch",
-            "--no-tags",
-            "--no-recurse-submodules",
-        ],
-    )
-    .arg(bundle.to_string_lossy())
-    .arg("refs/heads/main")
-    .run(logs, &mut *say)?;
-    Action::new(
-        "apply the approved changes to the setup folder",
-        "git",
-        &["-C", &at, "merge", "--ff-only", "FETCH_HEAD"],
-    )
-    .run(logs, &mut *say)
-    .map(|_| ())
+#[cfg(not(unix))]
+pub fn owner(_folder: &Path) -> Option<(u32, u32)> {
+    None
 }
 
 /// Whether the setup folder has changes of its own, not committed: the person is editing it by
@@ -459,7 +392,7 @@ fn is_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUNDLE, STARTER, apply_approved, choose, has_changes, publish, published, read};
+    use super::{STARTER, choose, has_changes, head, owner, read};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -481,18 +414,15 @@ mod tests {
         String::from_utf8_lossy(&done.stdout).trim().to_string()
     }
 
-    /// The journey of a change on the host, on real git: a new setup folder is one commit, its
-    /// HEAD is published, and a bundle of approved changes, as the review app makes one,
-    /// fast-forwards it.
+    /// A new setup folder on real git: the starter is one commit of FA1's, the folder's HEAD
+    /// and owner are read, and a change by hand shows.
     #[test]
-    fn a_new_setup_folder_is_committed_published_and_takes_the_approved_changes() {
-        let root =
-            std::env::temp_dir().join(format!("fa1-setup-test-publish-{}", std::process::id()));
+    fn a_new_setup_folder_is_committed_and_its_head_and_owner_are_read() {
+        let root = std::env::temp_dir().join(format!("fa1-setup-test-head-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let (folder, logs, into) = (root.join("setup"), root.join("logs"), root.join("out"));
+        let (folder, logs) = (root.join("setup"), root.join("logs"));
         fs::create_dir_all(&logs).unwrap();
-        let mut said = Vec::new();
-        let mut say = |line: &str| said.push(line.to_string());
+        let mut say = |_: &str| {};
 
         choose(&folder, &root.join("app"), &logs).unwrap();
         assert_eq!(
@@ -500,65 +430,19 @@ mod tests {
             "FA1: The starter"
         );
         assert!(!has_changes(&folder, &logs, &mut say).unwrap());
+        assert_eq!(head(&folder, &logs), git(&folder, &["rev-parse", "HEAD"]));
+        #[cfg(unix)]
+        assert_eq!(owner(&folder), owner(&root));
 
-        let head = publish(&folder, &into, &logs, &mut say).unwrap();
-        assert_eq!(head, git(&folder, &["rev-parse", "HEAD"]));
-        assert_eq!(published(&into), head);
-
-        // The review app's side: main at the published HEAD, an approved commit on it, and a
-        // bundle of what the setup folder lacks.
-        let review = root.join("review");
-        fs::create_dir_all(&review).unwrap();
-        let bundle = into.join(BUNDLE);
-        git(&review, &["init", "-q", "-b", "main"]);
-        git(&review, &["fetch", "-q", bundle.to_str().unwrap(), "HEAD"]);
-        git(&review, &["checkout", "-q", "-B", "main", "FETCH_HEAD"]);
-        fs::write(review.join("agents/helper.toml"), "title = \"Helper\"\n").unwrap();
-        git(&review, &["add", "--all"]);
-        git(&review, &["commit", "-q", "-m", "A helper"]);
-        let approved = root.join("approved.bundle");
-        let lacking = format!("^{head}");
-        git(
-            &review,
-            &[
-                "bundle",
-                "create",
-                "-q",
-                approved.to_str().unwrap(),
-                "refs/heads/main",
-                &lacking,
-            ],
-        );
-        apply_approved(&folder, &approved, &logs, &mut say).unwrap();
-        assert!(folder.join("agents/helper.toml").is_file());
-        assert_eq!(
-            git(&folder, &["rev-parse", "HEAD"]),
-            git(&review, &["rev-parse", "HEAD"])
-        );
-        assert!(!has_changes(&folder, &logs, &mut say).unwrap());
-        let moved = publish(&folder, &into, &logs, &mut say).unwrap();
-        assert_ne!(moved, head);
-        assert_eq!(published(&into), moved);
-
-        // A setup folder that moved elsewhere refuses the same bundle's fast-forward.
-        git(&folder, &["reset", "-q", "--hard", &head]);
         fs::write(folder.join("README.md"), "mine\n").unwrap();
         assert!(has_changes(&folder, &logs, &mut say).unwrap());
-        git(&folder, &["commit", "-q", "-a", "-m", "By hand"]);
-        let refused = apply_approved(&folder, &approved, &logs, &mut say).unwrap_err();
-        assert!(refused.contains("apply the approved changes"), "{refused}");
 
-        // A setup folder with no commit publishes nothing, and says so.
+        // A setup folder with no commit has no HEAD.
         let bare = root.join("no-commit");
         fs::create_dir_all(&bare).unwrap();
         git(&bare, &["init", "-q"]);
-        let nowhere = root.join("out-of-none");
-        assert_eq!(publish(&bare, &nowhere, &logs, &mut say).unwrap(), "");
-        assert!(!nowhere.join(BUNDLE).exists());
-        assert!(
-            said.iter().any(|line| line.contains("no commit yet")),
-            "{said:?}"
-        );
+        assert_eq!(head(&bare, &logs), "");
+        assert_eq!(owner(&root.join("nowhere")), None);
         let _ = fs::remove_dir_all(root);
     }
 

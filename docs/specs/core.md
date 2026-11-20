@@ -61,9 +61,8 @@ The app reaches the control plane the same way in every mode:
   ([containers.md](containers.md), "Starting").
 - The app starts, stops and reads logs through the mode's own tool: Docker Compose in mode 2,
   QEMU in mode 3.
-- The app publishes the setup folder's HEAD to the control plane at each start, as a file the
-  mode mounts read-only. It fetches the changes a person approved over HTTP, with a service
-  token the launch secret makes ([review-app.md](review-app.md), "Applying").
+- The control plane works in the person's setup folder, which mode 2 mounts
+  ([review-app.md](review-app.md)). Mode 3 has no way to it yet ([vms.md](vms.md), "Open").
 
 ## Keys
 

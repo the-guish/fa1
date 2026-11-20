@@ -37,7 +37,8 @@ START_SECONDS = 10.0
 INSTRUCTIONS = (
     "The review of the setup folder's changes. validate_setup checks the working copy."
     " submit_changelist asks the person to review a branch. The person approves or rejects on"
-    " the Reviews screen, then applies an approved change with Refresh in FA1."
+    " the Reviews screen. An approval puts the change in the setup folder, and Refresh in FA1"
+    " deploys it."
 )
 
 
@@ -113,8 +114,8 @@ def build_server(store: Reviews, port: int) -> FastMCP:
             raise ToolError(str(refused)) from None
         return lines(
             f"Changelist {made['name']} is submitted at commit {made['commit'][:12]}. The person"
-            " reviews it on the Reviews screen, then presses Refresh in FA1 to apply it."
-            " Checked:",
+            " reviews it on the Reviews screen. An approval puts it in the setup folder, and"
+            " Refresh in FA1 deploys it. Checked:",
             made["summary"],
         )
 
