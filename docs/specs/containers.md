@@ -11,13 +11,15 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 
 | service | image | role |
 |---|---|---|
-| `control` | Robinauts' `Dockerfile`, at the pinned commit | the server, in the local mode, on SQLite |
+| `control` | FA1's `apps/Dockerfile`, with Robinauts at the pinned commit | the control plane, in the local mode, on SQLite: Robinauts, neorc and FA1's applications |
 | `code` | the Claude Code worker's `Dockerfile`, at the same commit | the coding agents |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
 - The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.
+- The image of `control` is FA1's own. Its build context is `compose/apps/`, and Robinauts at
+  the pinned commit is its build context `robinauts` ([apps.md](apps.md)).
 
 ## Network
 
@@ -32,9 +34,11 @@ The worker in the personal sign-in accepts a broker on loopback or a private add
 service's name is neither, so `code` shares the network of `control`.
 
 ```sh
-robinauts start --local --host 0.0.0.0 --public-host 127.0.0.1 --port <port> \
-    --worker-host 127.0.0.1 --worker-port 8421
+python /opt/fa1/apps/backend.py --port <port> --worker-port 8421
 ```
+
+`backend.py` binds the front listener on `0.0.0.0` and the worker listener on `127.0.0.1`. It
+names `127.0.0.1` as the address a browser reaches.
 
 ## Storage
 
@@ -42,7 +46,7 @@ Each service keeps its data in a named volume of the project:
 
 | volume | service | mounted at | holds |
 |---|---|---|---|
-| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db` |
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db` |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |
