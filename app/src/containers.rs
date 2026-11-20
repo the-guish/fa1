@@ -284,7 +284,7 @@ impl Project {
         }
         self.folder.secret_or("launch", folder::launch_secret)?;
         let files_key = self.folder.secret_or("files_key", folder::random_secret)?;
-        // One key for the designer's three tool servers. The code worker holds none of them.
+        // One key for the designer's three tool servers.
         let setup_key = self.folder.secret_or("setup_key", folder::random_secret)?;
         self.folder.write_secret(
             "control.env",
@@ -304,17 +304,25 @@ impl Project {
         )?;
         // Compose mounts this folder: Docker would make a missing one, as root.
         fs::create_dir_all(self.published())?;
-        self.folder.write_secret(
-            "code.env",
-            &env_file(&[
-                ("CLAUDE_CODE_OAUTH_TOKEN", &keys.claude_code),
-                ("GITHUB_TOKEN", &keys.github),
-                ("GIT_AUTHOR_NAME", &setup.git_name),
-                ("GIT_AUTHOR_EMAIL", &setup.git_email),
-                ("GIT_COMMITTER_NAME", &setup.git_name),
-                ("GIT_COMMITTER_EMAIL", &setup.git_email),
-            ]),
-        )?;
+        let mut code = vec![
+            ("CLAUDE_CODE_OAUTH_TOKEN", keys.claude_code.as_str()),
+            ("GITHUB_TOKEN", keys.github.as_str()),
+            ("GIT_AUTHOR_NAME", setup.git_name.as_str()),
+            ("GIT_AUTHOR_EMAIL", setup.git_email.as_str()),
+            ("GIT_COMMITTER_NAME", setup.git_name.as_str()),
+            ("GIT_COMMITTER_EMAIL", setup.git_email.as_str()),
+        ];
+        // The code worker holds the key of a tool server only while an agent of its own uses
+        // that server (setup::code_secrets).
+        for (name, key) in [
+            ("FA1_FILES_KEY", files_key.as_str()),
+            ("FA1_SETUP_KEY", setup_key.as_str()),
+        ] {
+            if setup.code_secrets.iter().any(|wanted| wanted == name) {
+                code.push((name, key));
+            }
+        }
+        self.folder.write_secret("code.env", &env_file(&code))?;
         if self.folder.read_secret("worker_token").is_empty() {
             self.folder.write_secret("worker_token", "")?;
         }

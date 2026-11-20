@@ -75,6 +75,9 @@ const STARTER: &[(&str, &str)] = &[
 /// The providers a model of the setup folder may name: FA1's.
 const PROVIDERS: &[&str] = &["anthropic", "claude-code"];
 
+/// The worker of the code container, as FA1's fixed part names it.
+const CODE_WORKER: &str = "claude";
+
 /// What FA1 deploys from a setup folder.
 #[derive(Debug, PartialEq)]
 pub struct Setup {
@@ -84,6 +87,29 @@ pub struct Setup {
     pub flows: Vec<(PathBuf, Vec<u8>)>,
     pub git_name: String,
     pub git_email: String,
+    /// The variables that hold the keys the code worker needs: those of the tool servers its
+    /// agents use (`code_secrets`).
+    pub code_secrets: Vec<String>,
+}
+
+/// The variables that hold the keys of the tool servers the code worker's agents use. A worker
+/// reads a tool server's key from its own environment, so an agent of the code worker reaches a
+/// keyed server only with that key in the code container. `base` is FA1's fixed part, whose
+/// tool servers name their variable in `secret_env`. `agents` are the setup folder's, by id.
+pub fn code_secrets(base: &toml::Table, agents: &toml::Table) -> Vec<String> {
+    let servers = base.get("tool_servers").and_then(toml::Value::as_table);
+    let mut found: Vec<String> = agents
+        .values()
+        .filter(|agent| agent.get("worker").and_then(toml::Value::as_str) == Some(CODE_WORKER))
+        .filter_map(|agent| agent.get("tools").and_then(toml::Value::as_array))
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .filter_map(|tool| servers?.get(tool)?.get("secret_env")?.as_str())
+        .map(str::to_string)
+        .collect();
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// Makes `folder` the setup folder: refuses one inside the app's folder `app_root`, makes it
@@ -334,6 +360,8 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         return Err("agents/: no agent".to_string());
     }
 
+    let base: toml::Table = toml::from_str(BASE).map_err(|e| format!("FA1's fixed part: {e}"))?;
+    let code_secrets = code_secrets(&base, &agents);
     let mut added = toml::Table::new();
     added.insert("models".to_string(), models.into());
     added.insert("agents".to_string(), agents.into());
@@ -351,6 +379,7 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         flows,
         git_name,
         git_email,
+        code_secrets,
     })
 }
 
@@ -564,8 +593,11 @@ mod tests {
         let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
         assert_eq!(
             toml["agents"]["flow-designer"]["engine"].as_str(),
-            Some("pydantic-ai")
+            Some("claude-code")
         );
+        // The designer runs on the code worker, which then needs the key of its tool servers,
+        // and no other.
+        assert_eq!(setup.code_secrets, ["FA1_SETUP_KEY"]);
         // The designer's tools are tool servers of FA1's fixed part.
         for tool in toml["agents"]["flow-designer"]["tools"].as_array().unwrap() {
             let id = tool.as_str().unwrap();
@@ -601,6 +633,39 @@ mod tests {
             assert!(paths.contains(&wanted.to_string()), "{wanted}: {paths:?}");
         }
         let _ = fs::remove_dir_all(at);
+    }
+
+    #[test]
+    fn the_code_worker_gets_the_keys_of_the_tool_servers_its_agents_use() {
+        let base: toml::Table = toml::from_str(super::BASE).unwrap();
+        // (the agents) -> the variables of the code worker
+        let cases: &[(&str, &[&str])] = &[
+            // The starter's designer, on the code worker.
+            (
+                "[d]\nworker = \"claude\"\ntools = [\"setup-files\", \"setup-git\", \"setup-review\", \"sessions\"]",
+                &["FA1_SETUP_KEY"],
+            ),
+            // The same designer on the server's own worker: the code worker holds no key.
+            (
+                "[d]\nengine = \"pydantic-ai\"\ntools = [\"setup-files\", \"setup-git\", \"setup-review\"]",
+                &[],
+            ),
+            // A coding agent given the files tool, beside an assistant that has it too.
+            (
+                "[c]\nworker = \"claude\"\ntools = [\"files\", \"fetch\"]\n[a]\ntools = [\"files\", \"setup-git\"]",
+                &["FA1_FILES_KEY"],
+            ),
+            // Both keys, each once; a tool without a key, and one FA1 does not have, add none.
+            (
+                "[c]\nworker = \"claude\"\ntools = [\"setup-git\", \"files\", \"todo\", \"nope\"]\n[d]\nworker = \"claude\"\ntools = [\"setup-files\"]",
+                &["FA1_FILES_KEY", "FA1_SETUP_KEY"],
+            ),
+            ("[c]\nworker = \"claude\"", &[]),
+        ];
+        for (agents, expected) in cases {
+            let agents: toml::Table = toml::from_str(agents).unwrap();
+            assert_eq!(super::code_secrets(&base, &agents), *expected, "{agents:?}");
+        }
     }
 
     #[test]
