@@ -57,6 +57,9 @@ You review the pull request you are given. Say "ready" or "not ready", and why.
 - An agent's tools are the tool servers FA1 runs: `fetch`, `browser`, `files`, `todo`,
   `diagrams`, the designer's `setup-files`, `setup-git` and `setup-review`, and Robinauts' own
   `sessions`.
+- An agent's engine and worker are the person's to choose. The app gives a keyed tool server's
+  key to the worker of each agent that names the server ([containers.md](containers.md),
+  "Secrets").
 
 ### `knowledge/`
 

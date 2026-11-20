@@ -50,7 +50,12 @@ behind supergateway ([flows.md](flows.md), "Authoring").
 
 - The two services are one image and one user, so both write the volume. Each runs read-only,
   with no capability.
-- One key opens them: `FA1_SETUP_KEY`, which `control` holds. The code worker holds none of it.
+- One key opens them and the designer's two tools: `FA1_SETUP_KEY`, which `control` holds.
+- The code worker holds that key only while an agent of its own uses one of the three tool
+  servers ([containers.md](containers.md), "Secrets"). The starter's Flow designer is such an
+  agent.
+- An agent with the key writes the working copy and submits a changelist. It approves
+  nothing.
 - The git server brings the working copy's `main` to the published HEAD as it starts. A new
   HEAD starts it anew.
 - The designer's branches and its files not yet committed stay as they are. Work left on `main`
@@ -189,7 +194,8 @@ Refresh takes the approved changelists to the setup folder ([setup-folder.md](se
 
 - A worktree per conversation, so that two designer turns work at once. The reference git
   server has no worktree tool.
-- A trial run of a handler before the review. The designer has no shell.
+- A trial run of a handler in the control plane before the review. A designer on Claude Code
+  runs a handler's own logic in its directory, and no more.
 - A changelist that applies on a moved `main` without the designer, when the two changes touch
   different files.
 - The review of a GitHub pull request in the review app.

@@ -43,7 +43,7 @@ setup folder's starter holds:
   conversation with an agent and a model, wait for its answer and read its `RESULT` line;
 - `flows/code_and_review.yaml`: Robinauts' example flow, with its form.
 
-The Flow designer has no shell. It works through three tool servers
+The Flow designer reaches the setup folder through three tool servers alone
 ([review-app.md](review-app.md)):
 
 | tool server | gives the designer |
@@ -57,8 +57,12 @@ The Flow designer has no shell. It works through three tool servers
 3. The person presses Refresh. The approved change reaches the setup folder, and FA1 deploys
    it.
 
-- The designer runs on the server's own worker, with the Anthropic API key. The code worker
-  holds no key of the three tool servers.
+- The designer runs on Claude Code by default, with the Claude Code token. Its own directory in
+  the code worker holds no file of the setup folder.
+- The person chooses the designer's engine in `agents/flow-designer.toml`. On `pydantic-ai` it
+  runs on the server's own worker, with the Anthropic API key, and has no shell.
+- The code worker holds the key of the three tool servers only while an agent of its own uses
+  them ([containers.md](containers.md), "Secrets").
 - A flow's handler is code that runs in the control plane. The review shows each file whole,
   and marks the handlers.
 - A setup folder on GitHub takes changes the other way too: the agent Claude Code clones it,
@@ -117,8 +121,9 @@ A flow's `version` rises at each change. The server keeps the first content of e
 
 - A human approval in the middle of a flow: Robinauts declares no external queue. The person
   acts on the pull request on GitHub instead.
-- A trial run of a new handler before its review: the designer has no shell, and the checks
-  read a handler without running it.
+- A trial run of a new handler in the control plane before its review. The checks read a
+  handler without running it, and a designer on Claude Code runs a handler's own logic in its
+  directory at most.
 - Branches other than a loop's exit: a decision is a step whose value the next steps act on.
 - Reloading flows without a restart.
 

@@ -103,7 +103,27 @@ asyncio.run(main())
     % REVIEWED
 )
 """The Flow designer's turn, without its model: the calls it makes to its three tool servers,
-from where its worker runs, with the key the control plane holds (docs/specs/review-app.md)."""
+from where its worker runs, the code container, with the key the app gave that worker
+(docs/specs/review-app.md)."""
+
+CONNECTS = """
+set -eu
+export CLAUDE_CONFIG_DIR=/tmp/journey-claude
+mkdir -p /tmp/journey-work && cd /tmp/journey-work
+# Claude Code, as the worker's image bundles it with the Agent SDK.
+claude=$(python -c 'import claude_agent_sdk as sdk, pathlib
+print(pathlib.Path(sdk.__file__).parent / "_bundled" / "claude")')
+add() {
+    "$claude" mcp add --transport http "$1" "$2" --header "Authorization: Bearer $3" >/dev/null
+}
+add setup-files http://setup-files:8938/mcp "$FA1_SETUP_KEY"
+add setup-git http://setup-git:8939/mcp "$FA1_SETUP_KEY"
+add setup-review http://127.0.0.1:8422/mcp "$FA1_SETUP_KEY"
+add without-the-key http://setup-git:8939/mcp not-the-key
+"$claude" mcp list
+"""
+"""Claude Code's own MCP client, asked for the health of the designer's three tool servers as
+the worker names them, and of one with a wrong key."""
 
 
 @pytest.fixture(scope="module")
@@ -269,13 +289,15 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
     # The setup folder's HEAD is published for the review app and the designer's working copy.
-    # The code worker holds no key of the designer's tool servers.
     published = HOME / "compose" / "setup"
     assert (published / "main.bundle").is_file()
     assert (published / "head").read_text() == git(SETUP, "rev-parse", "HEAD").strip()
+    # The starter's Flow designer runs on the code worker, so that worker holds the key of the
+    # designer's tool servers. No agent of its own uses the files tool, so it holds no key of it.
     setup_key = (HOME / "secrets" / "setup_key").read_text().strip()
-    assert setup_key and setup_key not in code_env
+    assert setup_key and f"FA1_SETUP_KEY={setup_key}\n" in code_env
     assert setup_key in (HOME / "secrets" / "control.env").read_text()
+    assert "FA1_FILES_KEY" not in code_env
 
     # Start again, while everything runs: the control plane keeps running, and the worker keeps
     # its token.
@@ -348,10 +370,31 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert rail == ["robinauts", "neorc", "reviews"]
     assert {"reviews/submitter", "reviews/approver"} <= set(session["roles"])
 
+    # Claude Code's own client reaches the designer's three tool servers from the code worker,
+    # with the key, and is refused without it.
+    listed = subprocess.run(
+        ["docker", "exec", "-i", "fa1-code-1", "sh", "-s"],
+        input=CONNECTS,
+        capture_output=True,
+        text=True,
+    )
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    reached = {
+        line.split(":")[0]: "Connected" in line
+        for line in listed.stdout.splitlines()
+        if line.startswith(("setup-", "without-the-key"))
+    }
+    assert reached == {
+        "setup-files": True,
+        "setup-git": True,
+        "setup-review": True,
+        "without-the-key": False,
+    }, listed.stdout
+
     # The Flow designer proposes a change: a branch of its working copy, a file, the checks, a
     # commit and a changelist, through its three tool servers. Nothing reaches the setup folder.
     played = subprocess.run(
-        ["docker", "exec", "-i", "fa1-control-1", "python", "-"],
+        ["docker", "exec", "-i", "fa1-code-1", "python", "-"],
         input=DESIGNER,
         capture_output=True,
         text=True,
