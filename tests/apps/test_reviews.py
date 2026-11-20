@@ -232,6 +232,16 @@ def test_a_second_changelist_applies_once_it_holds_the_main_the_first_moved(worl
     ).exists()
 
 
+def fixed(agent: str, model: str) -> dict[str, str | None]:
+    """The files of a flow whose one step fixes `agent` and `model`."""
+    return {
+        "flows/fixed.yaml": "name: fixed\nversion: 0.1.0\ninputs:\n  name: string\n"
+        "output: tasks.hello\nsteps:\n  hello:\n    queue: default\n"
+        "    handler: examples:hello\n    params:\n      name: inputs.name\n"
+        f"    fixed_params:\n      agent: {agent}\n      model: {model}\n"
+    }
+
+
 def test_a_branch_the_review_app_does_not_take(world: World) -> None:
     with pytest.raises(NotFound, match="no branch"):
         world.store.submit("none", "proposals/none", "None")
@@ -253,6 +263,10 @@ def test_a_branch_the_review_app_does_not_take(world: World) -> None:
         ({"agents/helper.toml": HELPER.replace("sonnet", "gpt")}, "gpt is not in models.toml"),
         ({"agents/helper.toml": HELPER + 'tools = ["shell"]\n'}, "tool 'shell'"),
         ({"models.toml": "[elsewhere]\n"}, "models.toml: elsewhere"),
+        # A step that fixes its agent and model names a pair the server holds.
+        (fixed("claude-code", "sonnet"), "model 'sonnet' is not a model of the agent 'claude-code'"),
+        (fixed("claude-code", "gpt"), "model 'gpt' is not in models.toml"),
+        (fixed("nobody", "cc-sonnet"), "agent 'nobody' is not an agent of agents/"),
     ]
     for number, (files, word) in enumerate(cases):
         world.branch(f"proposals/bad{number}", files)
@@ -281,6 +295,11 @@ def test_a_changed_flow_needs_a_higher_version_than_the_one_that_runs(world: Wor
     world.commit({"flows/hello.yaml": changed.replace("version: 0.1.0", "version: 0.1.1")})
     made = world.store.submit("flow", "proposals/flow", "Flow")
     assert "hello 0.1.1" in made["summary"][1]
+
+    # A step that fixes an agent and one of that agent's models is taken.
+    world.branch("proposals/fixed", fixed("claude-code", "cc-sonnet"))
+    made = world.store.submit("fixed", "proposals/fixed", "Fixed")
+    assert "fixed 0.1.0" in made["summary"][1]
 
 
 def test_the_git_settings_of_both_folders_run_nothing(world: World, tmp_path: Path) -> None:
