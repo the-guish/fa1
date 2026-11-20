@@ -11,7 +11,7 @@
 
 name: fa1
 
-x-robinauts: &robinauts https://github.com/the-guish/robinauts.git#ed6e41d2a3afde82e70e2311cf021f0df1c41be6
+x-robinauts: &robinauts https://github.com/the-guish/robinauts.git#19484ff397a2b45f409a554f80cb17f7c1ce3d17
 
 x-mcp: &mcp
   read_only: true
@@ -143,7 +143,7 @@ services:
     build:
       context: ./todo
       additional_contexts:
-        source: https://github.com/the-guish/robinauts.git#ed6e41d2a3afde82e70e2311cf021f0df1c41be6:mcp/to-do-list
+        source: https://github.com/the-guish/robinauts.git#19484ff397a2b45f409a554f80cb17f7c1ce3d17:mcp/to-do-list
     volumes:
       - todos:/data
 
@@ -152,7 +152,7 @@ services:
     build:
       context: ./diagrams
       additional_contexts:
-        source: https://github.com/the-guish/robinauts.git#ed6e41d2a3afde82e70e2311cf021f0df1c41be6:mcp/diagrams
+        source: https://github.com/the-guish/robinauts.git#19484ff397a2b45f409a554f80cb17f7c1ce3d17:mcp/diagrams
 
 secrets:
   launch:
