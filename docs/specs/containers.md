@@ -15,6 +15,7 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 | `code` | the Claude Code worker's `Dockerfile`, at the same commit | the coding agents |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
+| `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
 - The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.
@@ -46,21 +47,40 @@ Each service keeps its data in a named volume of the project:
 
 | volume | service | mounted at | holds |
 |---|---|---|---|
-| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db` |
+| `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db`; `data/reviews/setup.git`: the review app's repository |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |
+| `setup-work` | `setup-files`, `setup-git`; `control`, read-only | `/work` | `setup/`: the designer's working copy of the setup folder |
 | `todos` | `todo` | `/data` | the to-do list |
 
 - A volume mounted on a folder of the image takes the folder's owner. Each service writes its
-  volume as the image's own user.
-- No service mounts a host folder or the Docker socket.
+  volume as the image's own user, except the three that run as the setup folder's owner (below).
+- No service mounts the Docker socket. The setup folder is the one folder of the person's that
+  a service mounts.
 - `control` and `code` mount `robinauts.toml` of `compose/`, read-only. The app writes it from the
   setup folder at each start ([setup-folder.md](setup-folder.md)). A change recreates `control`
   and `code`, since both read it as they start.
-- `control` mounts one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`, which
-  `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup folder's
-  `flows/` at each start. A change recreates `control`.
+- `control` and `code` mount one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`,
+  which `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup
+  folder's `flows/` at each start. A change recreates both.
+- `code` reads `[repositories]` of `flows/flows.toml` there. A conversation of the code worker
+  gets a worktree of each repository, and a code task names one of them.
+
+## The setup folder
+
+The review app works in the person's setup folder ([review-app.md](review-app.md)).
+
+- `control` mounts the setup folder at `/setup`. `setup-git` mounts it there read-only.
+- `control`, `setup-git` and `setup-files` run as the user and the group that own the setup
+  folder. A file the review app writes in the folder then has the folder's owner.
+- The app reads the owner from the folder, and gives it to Compose as `FA1_UID` and `FA1_GID`,
+  with the folder's path as `FA1_SETUP`.
+- The service `owner` gives the volumes `control-data` and `setup-work` to that user. It runs
+  `chown` as root before the three services start, and ends. It has no network and two
+  capabilities, `CHOWN` and `DAC_READ_SEARCH`.
+- A mounted folder is one the review app can write whole. Mode 2 accepts it, as it accepts an
+  agent's accidents: the review app writes the folder at an approval alone.
 
 ## Secrets
 
@@ -71,11 +91,15 @@ alone, and its files by every user, so the containers' users read them.
 |---|---|---|
 | `launch` | `control` | standard input, from `/run/secrets/launch` |
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
-| `control.env` | `control` | variables: the Anthropic API key, the files server's key |
-| `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author |
+| `control.env` | `control` | variables: the Anthropic API key, the files server's key, the key of the designer's tool servers |
+| `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author, and the key of each keyed tool server an agent of the code worker uses |
 | `files.env` | `files` | variables: the files server's key |
+| `setup.env` | `setup-files`, `setup-git` | variables: the key of the designer's tool servers |
 
 - Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
+- A worker reads a tool server's key from its own environment. The app reads each agent of the
+  setup folder, and writes a tool server's key to `code.env` when an agent of the worker
+  `claude` names that server in its `tools`.
 - The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
   out.
 
@@ -124,5 +148,7 @@ The app uses the engine the `docker` command reaches. The person installs it.
 
 ## Open
 
+- The setup folder on macOS, where Colima shares only some host folders with its VM, and maps
+  their owner.
 - Secrets files on macOS, where Colima shares only some host folders with its VM.
 - A container reaches the host and the LAN. Mode 2 accepts it.

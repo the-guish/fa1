@@ -28,6 +28,14 @@ const FILES: &[(&str, &str)] = &[
         "diagrams/Dockerfile",
         include_str!("../../compose/diagrams/Dockerfile"),
     ),
+    (
+        "setup-tools/Dockerfile",
+        include_str!("../../compose/setup-tools/Dockerfile"),
+    ),
+    (
+        "setup-tools/start.sh",
+        include_str!("../../compose/setup-tools/start.sh"),
+    ),
 ];
 
 /// FA1's applications and its host of them, as this repository's `apps/` holds them
@@ -51,8 +59,20 @@ const APPS: &[(&str, &str)] = &[
         include_str!("../../apps/reviews/ReviewsApp.tsx"),
     ),
     (
+        "reviews/diff.ts",
+        include_str!("../../apps/reviews/diff.ts"),
+    ),
+    (
         "reviews/backend.py",
         include_str!("../../apps/reviews/backend.py"),
+    ),
+    (
+        "reviews/checks.py",
+        include_str!("../../apps/reviews/checks.py"),
+    ),
+    (
+        "reviews/tools.py",
+        include_str!("../../apps/reviews/tools.py"),
     ),
     (
         "reviews/index.tsx",
@@ -72,7 +92,16 @@ const APPS: &[(&str, &str)] = &[
 const BUILT: &[&str] = &["node_modules", "dist", "vendor", "__pycache__"];
 
 /// The services up before the code worker's token exists.
-const CONTROL_PLANE: &[&str] = &["control", "fetch", "browser", "files", "todo", "diagrams"];
+const CONTROL_PLANE: &[&str] = &[
+    "control",
+    "fetch",
+    "browser",
+    "files",
+    "todo",
+    "diagrams",
+    "setup-git",
+    "setup-files",
+];
 
 /// The code worker's volumes, which a reset deletes.
 const CODE_VOLUMES: &[&str] = &["fa1_code-claude", "fa1_code-workspaces"];
@@ -83,13 +112,30 @@ pub struct Project {
 }
 
 impl Project {
-    /// `docker compose` on the project, with its two variables.
+    /// `docker compose` on the project, with its variables. The services that reach the setup
+    /// folder mount it, and run as its owner (docs/specs/containers.md, "The setup folder").
+    /// Before the person chose a folder, the variables name the app's own: Compose reads them
+    /// for every command, and no service starts then.
     fn compose(&self, what: &str, args: &[&str]) -> Action {
         let file = self.folder.compose().join("compose.yaml");
+        let chosen = self
+            .folder
+            .settings()
+            .setup_folder
+            .map(std::path::PathBuf::from);
+        let (uid, gid) = chosen
+            .as_deref()
+            .and_then(setup::owner)
+            .or_else(|| setup::owner(&self.folder.root))
+            .unwrap_or((1000, 1000));
+        let setup = chosen.unwrap_or_else(|| self.folder.compose().join("no-setup-folder"));
         Action::new(what, "docker", &["compose", "-f"])
             .arg(file.to_string_lossy())
             .env("FA1_PORT", self.port.to_string())
             .env("FA1_SECRETS", self.folder.secrets().to_string_lossy())
+            .env("FA1_SETUP", setup.to_string_lossy())
+            .env("FA1_UID", uid.to_string())
+            .env("FA1_GID", gid.to_string())
             .args_from(args)
     }
 
@@ -185,8 +231,12 @@ impl Project {
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
             format!(
-                "write {}: launch, control.env, code.env, files.env, worker_token",
+                "write {}: launch, control.env, code.env, files.env, setup.env, worker_token",
                 self.folder.secrets().display()
+            ),
+            format!(
+                "mount {setup_folder} in the control plane, for the review app, and read-only in \
+                 the designer's git server"
             ),
             self.build().line(),
             format!(
@@ -241,11 +291,14 @@ impl Project {
         }
         self.folder.secret_or("launch", folder::launch_secret)?;
         let files_key = self.folder.secret_or("files_key", folder::random_secret)?;
+        // One key for the designer's three tool servers.
+        let setup_key = self.folder.secret_or("setup_key", folder::random_secret)?;
         self.folder.write_secret(
             "control.env",
             &env_file(&[
                 ("FA1_ANTHROPIC_KEY", &keys.anthropic),
                 ("FA1_FILES_KEY", &files_key),
+                ("FA1_SETUP_KEY", &setup_key),
             ]),
         )?;
         self.folder.write_secret(
@@ -253,16 +306,28 @@ impl Project {
             &env_file(&[("SUPERGATEWAY_API_KEY", &files_key)]),
         )?;
         self.folder.write_secret(
-            "code.env",
-            &env_file(&[
-                ("CLAUDE_CODE_OAUTH_TOKEN", &keys.claude_code),
-                ("GITHUB_TOKEN", &keys.github),
-                ("GIT_AUTHOR_NAME", &setup.git_name),
-                ("GIT_AUTHOR_EMAIL", &setup.git_email),
-                ("GIT_COMMITTER_NAME", &setup.git_name),
-                ("GIT_COMMITTER_EMAIL", &setup.git_email),
-            ]),
+            "setup.env",
+            &env_file(&[("SUPERGATEWAY_API_KEY", &setup_key)]),
         )?;
+        let mut code = vec![
+            ("CLAUDE_CODE_OAUTH_TOKEN", keys.claude_code.as_str()),
+            ("GITHUB_TOKEN", keys.github.as_str()),
+            ("GIT_AUTHOR_NAME", setup.git_name.as_str()),
+            ("GIT_AUTHOR_EMAIL", setup.git_email.as_str()),
+            ("GIT_COMMITTER_NAME", setup.git_name.as_str()),
+            ("GIT_COMMITTER_EMAIL", setup.git_email.as_str()),
+        ];
+        // The code worker holds the key of a tool server only while an agent of its own uses
+        // that server (setup::code_secrets).
+        for (name, key) in [
+            ("FA1_FILES_KEY", files_key.as_str()),
+            ("FA1_SETUP_KEY", setup_key.as_str()),
+        ] {
+            if setup.code_secrets.iter().any(|wanted| wanted == name) {
+                code.push((name, key));
+            }
+        }
+        self.folder.write_secret("code.env", &env_file(&code))?;
         if self.folder.read_secret("worker_token").is_empty() {
             self.folder.write_secret("worker_token", "")?;
         }
@@ -310,6 +375,13 @@ impl Project {
         let setup_changed = self
             .write(keys, &setup)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
+        if let Some(chosen) = self.folder.settings().setup_folder
+            && setup::head(std::path::Path::new(&chosen), &logs).is_empty()
+        {
+            say(
+                "The setup folder has no commit yet: commit it, and the Flow designer can propose changes.",
+            );
+        }
         say("Building the images. The first build takes several minutes.");
         self.build().run(&logs, &mut *say)?;
         if setup_changed {
@@ -355,6 +427,26 @@ impl Project {
             "the code worker did not join within a minute: see its log on the Status screen"
                 .to_string(),
         )
+    }
+
+    /// What a refresh does to the setup folder before the start: a pull of the folder's upstream
+    /// (docs/specs/setup-folder.md, "Deploying it"). A folder with changes of its own takes
+    /// none. An approved changelist is in the folder already: the review app put it there.
+    pub fn pull_setup(&self, keys: &Keys, say: &mut dyn FnMut(&str)) -> Result<(), String> {
+        let logs = self.folder.logs();
+        let chosen = self
+            .folder
+            .settings()
+            .setup_folder
+            .ok_or("no setup folder yet: choose one on the Welcome screen")?;
+        let at = std::path::Path::new(&chosen);
+        if setup::has_changes(at, &logs, &mut *say)? {
+            say(
+                "The setup folder has changes of its own: it is deployed as it is, without a pull.",
+            );
+            return Ok(());
+        }
+        setup::pull(at, &keys.github, &logs, say)
     }
 
     pub fn reset_code(&self, say: &mut dyn FnMut(&str)) -> Result<(), String> {

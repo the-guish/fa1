@@ -33,7 +33,7 @@ output: tasks.review         # the run's result: a step's output
 
 steps:
   pick:
-    queue: default           # always default in FA1
+    queue: default           # the handlers' queue; a person's queue is below
     handler: my_tasks:pick   # handlers/my_tasks.py, function pick
     params:                  # the handler's arguments, by reference
       task: inputs.task
@@ -103,12 +103,37 @@ The model must be one of the agent's `models` in `agents/<agent>.toml`; add it t
 - **On demand:** the flow's form in Robinauts (`<name>.form.toml`; a `lov` of `repo_branch`,
   `agent` or `model` offers the setup's choices).
 - **On a schedule, or from a webhook:** not yet. Say so to the person; FA1 plans it.
-- **A human approval in the middle:** not yet: end the flow, and let the person act on the pull
-  request on GitHub.
+- **A person's answer in the middle:** a step on an external queue (below).
+
+## A step a person answers
+
+A flow may wait for a person: an approval, a triage of a review's issues, a choice.
+
+- `flows/queues.toml` names the queue, once for all the flows: `[queues.editors]` with
+  `kind = "external"`. FA1 takes external queues there, and `default` stays the handlers'.
+- The step is on that queue. Its `handler` is a short text for the person, and no function.
+- The step may name a form, `form: <file>.form.json`, beside the flow. The form reads the
+  step's inputs, and its result is what the next steps read. Without a form the person
+  answers with a text.
+- The person answers under Queues in neorc's screens. The run waits until then.
+- A loop whose `exit_condition` reads the answer sends the work back: "re-work" runs another
+  round, and "ready" ends it. A sub-flow per round keeps each round's answer apart.
+
+neorc's own examples are the reference: `examples/approval` and `examples/review_loop`, with
+their flows, their forms and what a form may hold (`docs/architecture/forms.md`,
+`docs/specs/task-completion.md`). Read them in your own directory, at `./neorc`, when it is
+there. A raised `version` covers a changed form too.
 
 ## Changing a flow
 
-1. Edit the files in your clone of the setup folder, and raise the flow's `version`.
-2. Push a branch and open a pull request that says what changed and how to run it.
-3. The person merges it and presses Refresh. A refresh restarts the server: a run in progress
-   ends.
+1. Edit the files on a branch of your own, and raise the flow's `version`.
+2. Ask for the person's review, in the way your instructions name:
+   - with `validate_setup` and `submit_changelist`, when you work in the working copy at
+     `/work/setup`: the person reviews the changelist under Reviews and approves it;
+   - with a pull request that says what changed and how to run it, when you work in a clone
+     from GitHub: the person merges it there.
+3. The person presses Refresh. A refresh restarts the server: a run in progress ends.
+
+`validate_setup` reads the files and runs none: it finds a flow the server would refuse, a
+handler that is not Python or that a step names and no module has, and a changed flow whose
+version did not rise. It cannot tell whether a handler does what the flow needs.

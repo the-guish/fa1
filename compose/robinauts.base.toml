@@ -43,6 +43,24 @@ url = "http://diagrams:8937/mcp"
 auth = "none"
 timeout_seconds = 30
 
+# The designer's tools (docs/specs/review-app.md): the files and the git of its working copy of
+# the setup folder, and the review app's two tools, on the control plane's own loopback address.
+# One key opens the three.
+[tool_servers.setup-files]
+url = "http://setup-files:8938/mcp"
+secret_env = "FA1_SETUP_KEY"
+timeout_seconds = 30
+
+[tool_servers.setup-git]
+url = "http://setup-git:8939/mcp"
+secret_env = "FA1_SETUP_KEY"
+timeout_seconds = 60
+
+[tool_servers.setup-review]
+url = "http://127.0.0.1:8422/mcp"
+secret_env = "FA1_SETUP_KEY"
+timeout_seconds = 120
+
 # --- the workers --------------------------------------------------------------------------------
 
 # The code worker runs in its own container, which the app starts with a token it created.
