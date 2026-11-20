@@ -86,6 +86,12 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
   with the control plane's.
 - Robinauts checks its own file at each start, and pins its schema. `robinauts.db` holds
   Robinauts' tables alone.
+- An application makes its file at its first start. The tables and the schema version are one
+  transaction, so a start that is cut leaves an empty file.
+- An application checks its file at each later start. It refuses a file of another version, and
+  a file that holds tables and no version.
+- A refusal is an error of the application's own. oneberth ends the start with the
+  application's name and its sentence.
 
 ## What an application may use
 
@@ -108,12 +114,16 @@ cp <the checkout>/frontend/package-lock.json apps/package-lock.json
 ## Tests
 
 - The unit tests compare the files the app writes with `apps/`.
+- `tests/apps/run.sh` checks `apps/` outside Docker, against Robinauts at the pinned commit. It
+  builds the interface with its type check, as the image's first two stages do. It runs
+  `tests/apps/test_reviews.py` in the environment the image's last stage installs.
+- `test_reviews.py` makes and checks `reviews.db` on real files, and starts `backend.py` as a
+  process. CI runs the script on every pull request.
 - The journey finds Reviews on the rail below neorc, opens it, reads its panel, asks its API,
   and finds `reviews.db` in the data directory.
 
 ## Open
 
-- A check of the interface before the image build. A type error stops `docker compose build`.
 - The gates of the interface's bundle: licences, size, audit.
 - oneberth giving a component the storage and a client to its own backend. `backend.py` then
   loses two lines: the data directory, and `composed_into`.

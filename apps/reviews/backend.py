@@ -43,25 +43,47 @@ BUSY_SECONDS = 10.0
 """How long a statement waits for a lock, as Robinauts' own file does."""
 
 
+class ReviewsError(Exception):
+    """A file of records that reviews refuses. oneberth ends the start with its sentence."""
+
+
 def connect(file: Path) -> sqlite3.Connection:
-    return sqlite3.connect(file, timeout=BUSY_SECONDS)
+    """A connection that opens a transaction only where one is asked for. Python's own mode
+    opens none for a `CREATE TABLE`, so two statements after it would be saved one by one."""
+    return sqlite3.connect(file, timeout=BUSY_SECONDS, isolation_level=None)
 
 
 def set_up(file: Path) -> None:
-    """Makes the file and its schema, or checks the version of the one found."""
+    """Makes the file and its schema, or checks the version of the one found.
+
+    The table and the version are one transaction. A start that is cut between the two leaves
+    the file empty, and the next start makes it again.
+    """
     file.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect(file)) as connection:
         connection.execute("PRAGMA journal_mode = WAL")
-        found = connection.execute("PRAGMA user_version").fetchone()[0]
-        if found == 0:
-            with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            found = connection.execute("PRAGMA user_version").fetchone()[0]
+            if found == 0:
+                rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                held = sorted(row[0] for row in rows)
+                if held:
+                    raise ReviewsError(
+                        f"{file} holds tables and no schema version ({', '.join(held)}): this"
+                        " build of reviews did not make it. Move it away and start again"
+                    )
                 connection.execute(SCHEMA)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        elif found != SCHEMA_VERSION:
-            raise RuntimeError(
-                f"{file} is at schema version {found}, and this build of reviews needs"
-                f" {SCHEMA_VERSION}"
-            )
+            elif found != SCHEMA_VERSION:
+                raise ReviewsError(
+                    f"{file} is at schema version {found}, and this build of reviews needs"
+                    f" {SCHEMA_VERSION}"
+                )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
 
 
 def reviews(data_dir: Path) -> Component:
