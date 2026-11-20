@@ -22,6 +22,8 @@ its parts.
   wired. `@robinauts/ui` exports `robinautsApp()` and `neorcWithForms()`
   ([core.md](core.md), "What FA1 takes from Robinauts").
 - Robinauts knows nothing of FA1's applications. A new application changes the two lists.
+- oneberth's shell catches an application that throws. `main.tsx` wraps the shell in FA1's
+  fallback page, which shows the failure and a reload when the shell itself throws.
 
 ## The folder
 
@@ -31,6 +33,7 @@ its parts.
 apps/
     backend.py                   the backend's list
     main.tsx                     the rail's list
+    Fallback.tsx, fallback.css   the page a shell that throws leaves
     <name>/
         backend.py               the API: a oneberth component, and the records
         index.tsx                the name, the title, the icon, the loader of the root component

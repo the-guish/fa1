@@ -18,7 +18,8 @@ import sys
 from pathlib import Path
 
 from oneberth.web import Listen, compose_app, run
-from robinauts.cli.backend import ConfigError, robinauts_parts
+from robinauts.cli.backend import robinauts_parts
+from robinauts.controller.contract.domain import ConfigError
 
 from reviews.backend import reviews
 

@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 
 // The page's base before any application's stylesheet, as Robinauts' own page loads it.
 import "@robinauts/ui/styles.css";
+import { Fallback } from "./Fallback";
 import { reviews } from "./reviews";
 
 const apps: readonly ShellApp[] = [robinautsApp(), neorcWithForms(), reviews];
@@ -21,6 +22,8 @@ if (root === null) {
 applyRememberedTheme();
 createRoot(root).render(
   <StrictMode>
-    <Shell apps={apps} title="FA1" />
+    <Fallback>
+      <Shell apps={apps} title="FA1" />
+    </Fallback>
   </StrictMode>,
 );

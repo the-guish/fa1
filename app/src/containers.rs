@@ -36,7 +36,9 @@ const APPS: &[(&str, &str)] = &[
     (".dockerignore", include_str!("../../apps/.dockerignore")),
     (".npmrc", include_str!("../../apps/.npmrc")),
     ("Dockerfile", include_str!("../../apps/Dockerfile")),
+    ("Fallback.tsx", include_str!("../../apps/Fallback.tsx")),
     ("backend.py", include_str!("../../apps/backend.py")),
+    ("fallback.css", include_str!("../../apps/fallback.css")),
     ("index.html", include_str!("../../apps/index.html")),
     ("main.tsx", include_str!("../../apps/main.tsx")),
     (
