@@ -1,14 +1,13 @@
 # The review app
 
 The review app holds proposed changes to the setup folder until a person approves them. A
-submitter proposes a branch as a changelist, and an approver's yes takes it to the setup folder
-at the next Refresh.
+submitter proposes a branch as a changelist, and an approver's yes puts it in the setup folder.
 
 ## Scope
 
 - The review app stands on its own. It touches the other apps at few points.
-- The review app keeps its records in a database of its own, and its commits in a git
-  repository of its own.
+- The review app keeps its records in a database of its own. Its repository is the setup
+  folder's.
 - The review app reviews changes to the setup folder ([setup-folder.md](setup-folder.md)).
   The person reviews a GitHub pull request on GitHub.
 - A changelist is a git branch. The review app tracks commits, and git tracks the files.
@@ -17,26 +16,24 @@ at the next Refresh.
 
 | part | where | holds |
 |---|---|---|
-| the setup folder | the host | what FA1 deploys: the one place a change counts |
-| the published HEAD | `compose/setup/main.bundle`, in the app's folder | the setup folder's HEAD, as a git bundle |
+| the setup folder | the host; `/setup` in `control` and in the designer's git server | what FA1 deploys, and the review app's repository |
 | the working copy | the volume `setup-work`, at `/work/setup` | a clone the designer edits |
-| the review app's repository | `reviews/setup.git`, in the data directory | `main`, and each changelist's commit |
 
-- The app writes the published HEAD at each start and refresh. `control` and the designer's git
-  server mount its folder read-only ([containers.md](containers.md)).
-- A change moves one way: the working copy, the review app's repository, the setup folder.
-- The app alone writes the setup folder. No container mounts it.
+- `control` mounts the setup folder, and writes it. The designer's git server mounts it
+  read-only ([containers.md](containers.md), "The setup folder").
+- A change moves one way: from the working copy to the setup folder.
+- The setup folder's files change at an approval alone. A submit adds a commit and a branch to
+  its repository, and leaves its files and its checked-out branch as they are.
 
 ## Main
 
-`main` is the setup folder's HEAD, plus the changelists a person approved and the setup folder
-lacks yet.
+`main` is the commit the setup folder is at: its HEAD, on the branch the person keeps.
 
-- The review app reads the published HEAD before each request that needs `main`.
-- `main` keeps its approved commits while the published HEAD is their ancestor. Any other
-  difference is the setup folder's to decide: `main` follows it.
-- A setup folder with no commit publishes nothing. A changelist then has nothing to start
-  from, and a submit says so.
+- The review app reads it at each request. A commit the person makes by hand counts at once.
+- A setup folder with no commit gives a changelist nothing to start from, and a submit says
+  so.
+- The review app runs git in the setup folder with settings of its own over the folder's. No
+  hook and no program the folder's settings name runs in the control plane.
 
 ## The working copy
 
@@ -48,18 +45,19 @@ behind supergateway ([flows.md](flows.md), "Authoring").
 | `setup-files` | `@modelcontextprotocol/server-filesystem`, on `/work` | reads and writes files |
 | `setup-git` | `mcp-server-git`, on `/work/setup` | makes a branch, stages, commits, merges |
 
-- The two services are one image and one user, so both write the volume. Each runs read-only,
-  with no capability.
+- The two services are one image, and run as the setup folder's owner, so both write the
+  volume. Each runs read-only, with no capability.
 - One key opens them and the designer's two tools: `FA1_SETUP_KEY`, which `control` holds.
 - The code worker holds that key only while an agent of its own uses one of the three tool
   servers ([containers.md](containers.md), "Secrets"). The starter's Flow designer is such an
   agent.
 - An agent with the key writes the working copy and submits a changelist. It approves
   nothing.
-- The git server brings the working copy's `main` to the published HEAD as it starts. A new
-  HEAD starts it anew.
-- The designer's branches and its files not yet committed stay as they are. Work left on `main`
-  moves to a branch `kept/<time>`.
+- The git server brings the working copy's `main` to the setup folder's commit as it starts.
+  Work left on `main` then moves to a branch `kept/<time>`.
+- The git server looks at the setup folder's commit every two seconds while it runs. A new
+  commit fast-forwards `main`, and nothing else.
+- The designer's branches and its files not yet committed stay as they are.
 - The designer's commits are by `Flow designer`. The setup folder's history then shows the
   changes the designer wrote.
 - The working copy is one folder. One designer turn works in it at a time.
@@ -85,18 +83,22 @@ The review app serves two tools to the designer, over MCP.
    `agents/helper.toml`, and commits.
 2. The designer calls `validate_setup`, and fixes what it names.
 3. The designer calls `submit_changelist("add-helper", "proposals/add-helper", "A helper", ...)`.
-4. The review app fetches the branch, pins its commit, and checks that commit.
-5. The person opens the changelist under Reviews, reads each file's change, and approves.
-   `main` moves to the commit.
-6. The person presses Refresh on FA1's Status screen. The app fetches `main`, fast-forwards the
-   setup folder, and deploys it.
+4. The review app fetches the branch into the setup folder's repository, pins its commit, and
+   checks that commit.
+5. The person opens the changelist under Reviews, reads each file's change, and approves. The
+   setup folder fast-forwards to the commit.
+6. The person presses Refresh on FA1's Status screen. The app deploys the setup folder.
 
 A changelist is submitted, approved or rejected.
 
 ## Submitting
 
-- A submit fetches the branch into the review app's repository. The changelist is that commit,
-  whatever the branch does next.
+- A submit fetches the branch into the setup folder's repository, as the branch
+  `changelists/<name>`. `git branch` in the setup folder lists it.
+- The changelist is the commit of the submit, whatever either branch does next. The review app
+  keeps that commit in its record.
+- A person who has `changelists/<name>` checked out gets no new commit under it. The submit
+  is refused until another branch is checked out.
 - The branch starts from the current `main`. A branch that does not is refused, and the
   submitter merges `main` into it.
 - A changelist holds text a person can read: plain files, each of 1 MB at most, 300 files at
@@ -130,40 +132,35 @@ The checks read the setup folder's files, and run none of them.
 
 ## Approval
 
-- An approval moves `main` to the changelist's commit. It needs `main` to be that commit's
-  ancestor still.
+- An approval fast-forwards the setup folder to the changelist's commit: `git merge --ff-only`
+  in the folder, on the branch the person keeps. It needs `main` to be that commit's ancestor
+  still.
 - A changelist submitted before another approval no longer starts from `main`. The submitter
   merges `main` into its branch, and submits it again.
-- A rejection closes the changelist, and changes nothing else.
+- A setup folder with changes not yet committed takes no approval. The person is editing it
+  by hand, and the changelist stays submitted.
+- The files an approval writes belong to the setup folder's owner: `control` runs as that
+  user.
+- An approval deletes the branch `changelists/<name>`, since the folder's own branch holds the
+  commit. A branch the person moved stays.
+- A rejection closes the changelist, and changes nothing else. Its branch stays, for the
+  person to delete.
+- A plain `git push` leaves these branches on this computer. `git push --all` sends them.
 
-Submitting, approving and fetching `main` are three roles in oneberth.
+Submitting and approving are two roles in oneberth.
 
 | role | holds | may |
 |---|---|---|
 | `reviews/submitter` | a person | read, submit |
 | `reviews/approver` | a person | read, approve, reject |
-| `reviews/host` | the app's service token | fetch the approved commits |
 
 - The roles are general: a role covers every changelist.
-- The local user holds the two roles of a person.
+- The local user holds both roles.
 
-## Applying
+## Deploying
 
-Refresh takes the approved changelists to the setup folder ([setup-folder.md](setup-folder.md),
-"Deploying it").
-
-1. The app makes a service token of `reviews/host` with the launch secret.
-2. The app fetches `GET /reviews/api/approved.bundle`: a git bundle of `main`, from the
-   published HEAD on. It ends the token.
-3. The app runs `git fetch` on the bundle in the setup folder, then `git merge --ff-only`.
-4. The app publishes the new HEAD, and deploys the setup folder.
-
-- git checks each object of the bundle as it fetches. A setup folder that moved elsewhere
-  refuses the fast-forward, and the refresh stops.
-- A setup folder with changes not yet committed takes no approved change. The person is
-  editing it by hand.
-- The control plane holds the approved commits until the setup folder has them. A stop keeps
-  them.
+An approved changelist is in the setup folder, and runs after a deploy. Refresh deploys the
+setup folder ([setup-folder.md](setup-folder.md), "Deploying it").
 
 ## The API
 
@@ -172,9 +169,8 @@ Refresh takes the approved changelists to the setup folder ([setup-folder.md](se
 | `GET /api/changelists?state=pending\|closed` | any | the submitted changelists, or the approved and the rejected |
 | `GET /api/changelists/<name>` | any | a changelist, with each file's old and new version, and what was checked |
 | `POST /api/submit_changelist` | submitter | `{name, branch, title, description}`: as the tool |
-| `POST /api/approve_changelist` | approver | `{changelist_name}`: moves `main` |
+| `POST /api/approve_changelist` | approver | `{changelist_name}`: fast-forwards the setup folder |
 | `POST /api/reject_changelist` | approver | `{changelist_name}` |
-| `GET /api/approved.bundle` | host | the approved commits the setup folder lacks; 204 for none |
 
 ## Screens
 
@@ -187,7 +183,7 @@ Refresh takes the approved changelists to the setup folder ([setup-folder.md](se
   GitHub's review of a pull request. Each file's panel collapses.
 - A file under `flows/handlers/` carries a mark: its code runs in the control plane.
 - **Approve** and **Reject** close a submitted changelist. An approved one says whether the
-  setup folder holds it yet, and names Refresh.
+  setup folder still holds it, and names Refresh.
 - **Back** returns to the list.
 
 ## Open

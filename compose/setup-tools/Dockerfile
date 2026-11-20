@@ -2,7 +2,8 @@
 # (docs/specs/review-app.md, "The working copy"): the reference MCP filesystem server and the
 # reference MCP git server, each behind supergateway, which serves it over Streamable HTTP.
 # Every request carries the key SUPERGATEWAY_API_KEY holds. The command names the server:
-# `files` or `git`. Both run as the user `node`, so both write the volume at /work.
+# `files` or `git`. compose.yaml runs both as the setup folder's owner, and its service `owner`
+# gives that user the volume at /work.
 FROM node:24-slim
 
 # git and Python, for the git server. It runs git itself, and pins what a repository's own

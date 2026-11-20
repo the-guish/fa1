@@ -1,10 +1,12 @@
 # FA1's mode 2: the control plane and the code worker in containers (docs/specs/containers.md).
-# The app runs this project as `fa1`, with two variables:
+# The app runs this project as `fa1`, with these variables:
 #
 #   FA1_PORT        the port of the front listener, on the host's 127.0.0.1 and in `control`
 #   FA1_SECRETS     the app's secrets folder: control.env, code.env, files.env, setup.env, launch,
 #                   worker_token
-#   FA1_SETUP_HEAD  the setup folder's HEAD, as the app last published it in setup/main.bundle
+#   FA1_SETUP       the person's setup folder, on the host
+#   FA1_UID         the user that owns the setup folder, and FA1_GID, its group: the services
+#                   that reach the folder run as that user
 #
 # Every image is built here, from Robinauts at the pinned commit and from this folder. `apps/`
 # holds FA1's own image of the control plane: its applications, and its host of them.
@@ -22,6 +24,21 @@ x-mcp: &mcp
   restart: unless-stopped
 
 services:
+  # Gives the volumes of the services below to the setup folder's owner, since those services
+  # run as that user. It ends at once.
+  owner:
+    build: ./setup-tools
+    user: root
+    entrypoint: [chown, -R, "${FA1_UID:?}:${FA1_GID:?}", /work, /var/lib/robinauts]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH]
+    volumes:
+      - setup-work:/work
+      - control-data:/var/lib/robinauts
+    restart: "no"
+
   # The control plane, in the local mode, on SQLite. The front listener is published on the
   # host's loopback. The worker listener is on the container's loopback: `code` shares this
   # container's network and reaches it there.
@@ -38,28 +55,33 @@ services:
       - >-
         exec python /opt/fa1/apps/backend.py --port ${FA1_PORT:?} --worker-port 8421
         < /run/secrets/launch
+    # The setup folder's owner: the review app writes the folder (docs/specs/review-app.md).
+    user: "${FA1_UID:?}:${FA1_GID:?}"
     environment:
+      HOME: /var/lib/robinauts
       ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
       ROBINAUTS_DATA_DIR: /var/lib/robinauts/data
       # The flows, from the setup folder: the server uploads them to neorc at its start, and
       # runs neorc's worker beside itself, with the handlers of flows/handlers/.
       ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
       # The review app (docs/specs/review-app.md): the designer's working copy of the setup
-      # folder, which it fetches branches from, and the setup folder's HEAD, which the app
-      # publishes as a bundle.
+      # folder, which it fetches branches from, and the person's setup folder, which an
+      # approval fast-forwards.
       REVIEWS_WORK: /work/setup
-      REVIEWS_PUBLISHED: /etc/fa1/setup/main.bundle
+      REVIEWS_SETUP: /setup
     env_file: ${FA1_SECRETS:?}/control.env
     secrets: [launch]
     volumes:
       - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
       - ./flows:/etc/fa1/flows:ro
-      - ./setup:/etc/fa1/setup:ro
+      - ${FA1_SETUP:?}:/setup
       - control-data:/var/lib/robinauts
       - setup-work:/work:ro
-    # The volume setup-work takes its owner from the first image that mounts it: the tool
-    # servers', which write it.
-    depends_on: [setup-git]
+    depends_on:
+      owner:
+        condition: service_completed_successfully
+      setup-git:
+        condition: service_started
     ports:
       - 127.0.0.1:${FA1_PORT:?}:${FA1_PORT:?}
     restart: unless-stopped
@@ -112,14 +134,15 @@ services:
 
   # The designer's working copy of the setup folder, and its two tool servers: the reference
   # filesystem server and the reference git server (docs/specs/review-app.md). The git server
-  # brings the working copy's main to the setup folder's HEAD as it starts, so a new HEAD in
-  # FA1_SETUP_HEAD starts it anew.
+  # reads the setup folder, and brings the working copy's main to the folder's commit. Both
+  # run as the setup folder's owner, so the review app fetches from the working copy.
   setup-git:
     <<: *mcp
     build: ./setup-tools
     command: [git]
+    user: "${FA1_UID:?}:${FA1_GID:?}"
     environment:
-      FA1_SETUP_HEAD: ${FA1_SETUP_HEAD:-}
+      HOME: /tmp
       GIT_AUTHOR_NAME: Flow designer
       GIT_AUTHOR_EMAIL: flow-designer@fa1.invalid
       GIT_COMMITTER_NAME: Flow designer
@@ -127,12 +150,18 @@ services:
     env_file: ${FA1_SECRETS:?}/setup.env
     volumes:
       - setup-work:/work
-      - ./setup:/etc/fa1/setup:ro
+      - ${FA1_SETUP:?}:/setup:ro
+    depends_on:
+      owner:
+        condition: service_completed_successfully
 
   setup-files:
     <<: *mcp
     build: ./setup-tools
     command: [files]
+    user: "${FA1_UID:?}:${FA1_GID:?}"
+    environment:
+      HOME: /tmp
     env_file: ${FA1_SECRETS:?}/setup.env
     volumes:
       - setup-work:/work

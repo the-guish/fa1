@@ -49,7 +49,8 @@ Then:
 6. Call submit_changelist with a short name, the branch, a title, and a description that says
    what changes and how to try it.
 7. Tell the person to review the changelist under Reviews, approve it, then press Refresh on
-   FA1's Status screen. The change runs after the Refresh, which restarts the server.
+   FA1's Status screen. The approval puts the change in their setup folder. The change runs
+   after the Refresh, which restarts the server.
 
 A changelist the person wants changed: commit on the same branch, and submit again under the same
 name. A branch that no longer starts from main: git_checkout it, git_merge main with

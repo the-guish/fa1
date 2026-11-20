@@ -1,5 +1,5 @@
-"""The review app, without Docker (docs/specs/review-app.md): a setup folder, its bundle, a
-working copy as the tool servers hold it, and the review app's own repository, on real git.
+"""The review app, without Docker (docs/specs/review-app.md): a setup folder, which is the
+review app's repository, and a working copy as the tool servers hold it, on real git.
 
 Needs Robinauts at the pinned commit, with neorc and oneberth, and git: tests/apps/run.sh
 runs these with them.
@@ -57,45 +57,48 @@ def git(folder: Path, *arguments: str) -> str:
 
 
 class World:
-    """The setup folder on the host, the bundle the app writes from it, the designer's working
-    copy, and the review app."""
+    """The person's setup folder, the designer's working copy, and the review app."""
 
     def __init__(self, at: Path) -> None:
         self.at = at
         self.setup = at / "setup"
-        self.bundle = at / "published" / "main.bundle"
         self.work = at / "work" / "setup"
         self.deployed = at / "deployed-flows"
         shutil.copytree(STARTER, self.setup)
         git(self.setup, "init", "--quiet", "--initial-branch", "trunk")
         git(self.setup, "add", "--all")
         git(self.setup, "commit", "--quiet", "--message", "The starter")
-        self.publish()
+        self.deploy()
         # The working copy, as the tool servers' start makes it (compose/setup-tools/start.sh).
         self.work.mkdir(parents=True)
         git(self.work, "init", "--quiet", "--initial-branch", "main")
-        git(self.work, "fetch", "--quiet", str(self.bundle), "HEAD")
+        git(self.work, "fetch", "--quiet", str(self.setup), "HEAD")
         git(self.work, "checkout", "--quiet", "-B", "main", "FETCH_HEAD")
         self.store = Reviews(
-            at / "data", work=self.work, published=self.bundle, config=BASE, flows=self.deployed
+            at / "data", work=self.work, setup=self.setup, config=BASE, flows=self.deployed
         )
         self.store.set_up()
 
-    def publish(self) -> None:
-        """What the app does at each start and refresh: the bundle, and the flows that run."""
-        self.bundle.parent.mkdir(exist_ok=True)
-        git(self.setup, "bundle", "create", "--quiet", str(self.bundle), "HEAD")
+    def deploy(self) -> None:
+        """What the app does at each start and refresh: the flows that run."""
         shutil.rmtree(self.deployed, ignore_errors=True)
         shutil.copytree(self.setup / "flows", self.deployed)
+
+    def follow(self) -> None:
+        """What the git server does when the setup folder's commit changes: the working
+        copy's main follows it, while another branch is checked out."""
+        git(self.work, "fetch", "--quiet", str(self.setup), "HEAD:main")
+
+    def head(self) -> str:
+        return git(self.setup, "rev-parse", "HEAD")
 
     def branch(self, name: str, files: dict[str, str | None], message: str = "A change") -> str:
         """A branch of the working copy from its main, with `files` written or removed, and
         committed; the commit."""
         git(self.work, "checkout", "--quiet", "-B", name, "main")
-        self.commit(files, message)
-        return git(self.work, "rev-parse", "HEAD")
+        return self.commit(files, message)
 
-    def commit(self, files: dict[str, str | None], message: str = "More") -> None:
+    def commit(self, files: dict[str, str | None], message: str = "More") -> str:
         for path, text in files.items():
             target = self.work / path
             if text is None:
@@ -105,27 +108,7 @@ class World:
                 target.write_text(text)
         git(self.work, "add", "--all")
         git(self.work, "commit", "--quiet", "--message", message)
-
-    def refresh(self) -> bool:
-        """What Refresh does on the host: the approved commits into the setup folder, then
-        the bundle anew. Whether there was any."""
-        bundle = self.store.approved_bundle()
-        if bundle is None:
-            return False
-        fetched = self.at / "approved.bundle"
-        fetched.write_bytes(bundle)
-        git(
-            self.setup,
-            "-c",
-            "fetch.fsckObjects=true",
-            "fetch",
-            "--quiet",
-            str(fetched),
-            "refs/heads/main",
-        )
-        git(self.setup, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
-        self.publish()
-        return True
+        return git(self.work, "rev-parse", "HEAD")
 
 
 @pytest.fixture
@@ -157,21 +140,34 @@ def test_a_branch_is_submitted_reviewed_approved_and_reaches_the_setup_folder(wo
         STARTER / "knowledge/README.md"
     ).read_text()
 
-    # Nothing reaches the setup folder before the approval.
-    assert world.store.approved_bundle() is None
+    # Nothing of the setup folder's files changes before the approval.
+    assert world.head() != commit
+    assert not (world.setup / "agents/helper.toml").exists()
+    assert git(world.setup, "status", "--porcelain") == ""
+    assert git(world.setup, "symbolic-ref", "--short", "HEAD") == "trunk"
+    # The changelist shows as a branch of the folder, at the commit under review.
+    assert git(world.setup, "branch", "--format=%(refname:short)").split() == [
+        "changelists/helper",
+        "trunk",
+    ]
+    assert git(world.setup, "rev-parse", "changelists/helper") == commit
+
+    # The approval fast-forwards the folder, on the branch the person keeps.
     assert world.store.approve("helper") == {"name": "helper", "status": "approved"}
     assert world.store.changelists("pending") == []
-    [closed] = world.store.changelists("closed")
-    assert (closed["status"], closed["applied"]) == ("approved", False)
-
-    assert world.refresh()
     assert (world.setup / "agents/helper.toml").read_text() == HELPER
     assert not (world.setup / "knowledge/README.md").exists()
-    assert git(world.setup, "rev-parse", "HEAD") == commit
+    assert world.head() == commit
+    assert git(world.setup, "symbolic-ref", "--short", "HEAD") == "trunk"
     assert git(world.setup, "status", "--porcelain") == ""
+    assert git(world.setup, "branch", "--format=%(refname:short)") == "trunk"
     [closed] = world.store.changelists("closed")
-    assert closed["applied"] is True
-    assert world.store.approved_bundle() is None
+    assert (closed["status"], closed["applied"]) == ("approved", True)
+
+    # A setup folder the person took back no longer holds the commit.
+    git(world.setup, "reset", "--quiet", "--hard", "HEAD~1")
+    [closed] = world.store.changelists("closed")
+    assert closed["applied"] is False
 
 
 def test_a_changelist_pins_the_commit_it_was_submitted_at(world: World) -> None:
@@ -179,9 +175,14 @@ def test_a_changelist_pins_the_commit_it_was_submitted_at(world: World) -> None:
     world.store.submit("pin", "proposals/pin", "Pin")
     world.commit({"knowledge/pin.md": "slipped in after the review\n"})
     assert world.store.changelist("pin")["commit"] == reviewed
+    # The branch in the setup folder moved by hand changes nothing of what was reviewed, and
+    # the approval leaves a branch the person moved.
+    git(world.setup, "fetch", "--quiet", str(world.work), "proposals/pin")
+    git(world.setup, "branch", "--force", "changelists/pin", "FETCH_HEAD")
     world.store.approve("pin")
-    world.refresh()
     assert (world.setup / "knowledge/pin.md").read_text() == "reviewed\n"
+    assert world.head() == reviewed
+    assert git(world.setup, "rev-parse", "changelists/pin") != reviewed
 
     # The later commit is a new submit, and an approved name is not taken again.
     with pytest.raises(Conflict, match="approved"):
@@ -196,7 +197,13 @@ def test_a_rejected_changelist_takes_a_new_commit_under_its_name(world: World) -
     with pytest.raises(Conflict, match="rejected"):
         world.store.approve("again")
     world.commit({"knowledge/again.md": "second\n"})
-    world.store.submit("again", "proposals/again", "Again, better")
+    # A changelist's branch the person checked out is not moved under them.
+    git(world.setup, "checkout", "--quiet", "changelists/again")
+    with pytest.raises(Conflict, match="checked out"):
+        world.store.submit("again", "proposals/again", "Again, better")
+    git(world.setup, "checkout", "--quiet", "trunk")
+    made = world.store.submit("again", "proposals/again", "Again, better")
+    assert git(world.setup, "rev-parse", "changelists/again") == made["commit"]
     [pending] = world.store.changelists("pending")
     assert pending["title"] == "Again, better"
     [file] = world.store.changelist("again")["files"]
@@ -209,20 +216,17 @@ def test_a_second_changelist_applies_once_it_holds_the_main_the_first_moved(worl
     world.store.submit("one", "proposals/one", "One")
     world.store.submit("two", "proposals/two", "Two")
     world.store.approve("one")
-    with pytest.raises(Conflict, match="main moved"):
+    with pytest.raises(Conflict, match="the setup folder moved"):
         world.store.approve("two")
-    with pytest.raises(Conflict, match="does not start from the current main"):
+    with pytest.raises(Conflict, match="does not start from the commit the setup folder is at"):
         world.store.submit("two", "proposals/two", "Two")
+    assert not (world.setup / "knowledge/two.md").exists()
 
-    # Refresh takes the first to the setup folder, and the working copy's main follows.
-    world.refresh()
-    git(world.work, "fetch", "--quiet", str(world.bundle), "HEAD")
-    git(world.work, "branch", "--force", "main", "FETCH_HEAD")
-    git(world.work, "checkout", "--quiet", "proposals/two")
+    # The working copy's main follows the setup folder, and the second merges it.
+    world.follow()
     git(world.work, "merge", "--quiet", "--no-edit", "main")
     world.store.submit("two", "proposals/two", "Two")
     world.store.approve("two")
-    world.refresh()
     assert (world.setup / "knowledge/one.md").exists() and (
         world.setup / "knowledge/two.md"
     ).exists()
@@ -231,8 +235,9 @@ def test_a_second_changelist_applies_once_it_holds_the_main_the_first_moved(worl
 def test_a_branch_the_review_app_does_not_take(world: World) -> None:
     with pytest.raises(NotFound, match="no branch"):
         world.store.submit("none", "proposals/none", "None")
-    with pytest.raises(Invalid, match="changelist name"):
-        world.store.submit("../x", "proposals/none", "None")
+    for name in ("../x", "a..b", "x.lock", "x."):
+        with pytest.raises(Invalid, match="changelist name"):
+            world.store.submit(name, "proposals/none", "None")
     with pytest.raises(Invalid, match="branch name"):
         world.store.submit("x", "--upload-pack=touch /tmp/x", "None")
     git(world.work, "branch", "proposals/empty", "main")
@@ -278,20 +283,29 @@ def test_a_changed_flow_needs_a_higher_version_than_the_one_that_runs(world: Wor
     assert "hello 0.1.1" in made["summary"][1]
 
 
-def test_the_working_copy_s_own_git_settings_run_nothing(world: World, tmp_path: Path) -> None:
+def test_the_git_settings_of_both_folders_run_nothing(world: World, tmp_path: Path) -> None:
     world.branch("proposals/quiet", {"knowledge/quiet.md": "quiet\n"})
     marks = tmp_path / "marks"
     marks.mkdir()
-    hooks = world.work / ".git" / "hooks"
-    for hook in ("pre-upload-pack", "post-upload-pack", "reference-transaction", "pre-receive"):
-        (hooks / hook).write_text(f"#!/bin/sh\ntouch {marks}/{hook}\n")
-        (hooks / hook).chmod(0o755)
-    for key in ("core.fsmonitor", "uploadpack.packObjectsHook", "core.sshCommand", "core.pager"):
-        git(world.work, "config", key, f"touch {marks}/{key}")
-    git(world.work, "config", "core.hooksPath", str(hooks))
+    hooks = (
+        "pre-upload-pack", "post-upload-pack", "reference-transaction", "pre-receive",
+        "post-merge", "post-checkout",
+    )  # fmt: skip
+    for folder in (world.work, world.setup):
+        for hook in hooks:
+            (folder / ".git" / "hooks" / hook).write_text(
+                f"#!/bin/sh\ntouch {marks}/{folder.parent.name}-{hook}\n"
+            )
+            (folder / ".git" / "hooks" / hook).chmod(0o755)
+        for key in (
+            "core.fsmonitor", "uploadpack.packObjectsHook", "core.sshCommand", "core.pager"
+        ):  # fmt: skip
+            git(folder, "config", key, f"touch {marks}/{folder.parent.name}-{key}")
+        git(folder, "config", "core.hooksPath", str(folder / ".git" / "hooks"))
     world.store.submit("quiet", "proposals/quiet", "Quiet")
     world.store.changelist("quiet")
     world.store.approve("quiet")
+    assert (world.setup / "knowledge/quiet.md").is_file()
     assert list(marks.iterdir()) == []
 
 
@@ -323,38 +337,73 @@ def test_validate_setup_reads_the_working_copy_as_it_is_and_follows_no_link(worl
     assert (copied / "flows" / "handlers" / "examples.py").is_file()
 
 
-def test_main_follows_the_setup_folder(world: World) -> None:
-    # A commit the person makes by hand reaches main at the next publish.
+def test_a_changelist_starts_from_the_commit_the_setup_folder_is_at(world: World) -> None:
+    # A commit the person makes by hand moves what a changelist starts from, at once.
+    world.branch("proposals/stale", {"knowledge/stale.md": "stale\n"})
+    world.store.submit("stale", "proposals/stale", "Stale")
     (world.setup / "knowledge" / "by-hand.md").write_text("by hand\n")
     git(world.setup, "add", "--all")
     git(world.setup, "commit", "--quiet", "--message", "By hand")
-    world.branch("proposals/stale", {"knowledge/stale.md": "stale\n"})
-    world.store.submit("stale", "proposals/stale", "Stale")
-    world.publish()
-    with pytest.raises(Conflict, match="main moved"):
+    with pytest.raises(Conflict, match="the setup folder moved"):
         world.store.approve("stale")
-    assert world.store.rev("refs/heads/main") == git(world.setup, "rev-parse", "HEAD")
+    assert not (world.setup / "knowledge/stale.md").exists()
+
+    # A setup folder the person is editing takes no approved change, and keeps the edit.
+    world.follow()
+    git(world.work, "merge", "--quiet", "--no-edit", "main")
+    world.store.submit("stale", "proposals/stale", "Stale")
+    (world.setup / "README.md").write_text("mine, not committed\n")
+    with pytest.raises(Conflict, match="changes not yet committed"):
+        world.store.approve("stale")
+    assert (world.setup / "README.md").read_text() == "mine, not committed\n"
+    [pending] = world.store.changelists("pending")
+    assert pending["status"] == "submitted"
+
+    # A file of the person's own, in the way of the change, stops the approval too.
+    git(world.setup, "checkout", "--quiet", "README.md")
+    (world.setup / "knowledge" / "stale.md").write_text("mine, never added\n")
+    with pytest.raises(Conflict, match="did not take changelist 'stale'"):
+        world.store.approve("stale")
+    assert (world.setup / "knowledge/stale.md").read_text() == "mine, never added\n"
+    (world.setup / "knowledge" / "stale.md").unlink()
+    world.store.approve("stale")
+    assert (world.setup / "knowledge/stale.md").read_text() == "stale\n"
 
     # A setup folder without a commit gives nothing to start from.
-    empty = Reviews(world.at / "other", work=world.work, published=world.at / "none.bundle")
+    bare = world.at / "no-commit"
+    bare.mkdir()
+    git(bare, "init", "--quiet")
+    empty = Reviews(world.at / "other", work=world.work, setup=bare)
     empty.set_up()
     with pytest.raises(Conflict, match="no commit yet"):
         empty.submit("stale", "proposals/stale", "Stale")
 
 
-def test_a_file_from_before_branches_starts_again(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [1, 2])
+def test_a_file_of_an_earlier_schema_starts_again(tmp_path: Path, version: int) -> None:
     data = tmp_path / "data"
-    data.mkdir()
+    (data / "reviews" / "setup.git").mkdir(parents=True)
     with sqlite3.connect(data / "reviews.db") as old:
         old.executescript(
             "CREATE TABLE folders (path TEXT PRIMARY KEY, registered_at TEXT NOT NULL);"
             "CREATE TABLE changelists (name TEXT PRIMARY KEY, status TEXT NOT NULL);"
-            "INSERT INTO changelists VALUES ('old', 'open');"
-            "PRAGMA user_version = 1;"
+            "INSERT INTO changelists VALUES ('old', 'approved');"
+            f"PRAGMA user_version = {version};"
         )
-    store = Reviews(data, work=tmp_path / "work", published=tmp_path / "none.bundle")
+    setup = tmp_path / "setup"
+    setup.mkdir()
+    git(setup, "init", "--quiet", "--initial-branch", "trunk")
+    git(setup, "commit", "--quiet", "--allow-empty", "--message", "One")
+    git(setup, "update-ref", "refs/changelists/earlier", "HEAD")
+    store = Reviews(data, work=tmp_path / "work", setup=setup)
     store.set_up()
     assert store.changelists("pending") == [] and store.changelists("closed") == []
+    assert not (data / "reviews" / "setup.git").exists()
+    # A changelist named outside the branches is a branch now.
+    assert git(setup, "for-each-ref", "--format=%(refname)").split() == [
+        "refs/heads/changelists/earlier",
+        "refs/heads/trunk",
+    ]
     store.set_up()
 
 
@@ -378,7 +427,7 @@ def composed(world: World) -> Iterator[tuple[World, object, int]]:
     component = reviews(
         world.at / "api-data",
         work=world.work,
-        published=world.bundle,
+        setup=world.setup,
         config=BASE,
         flows=world.deployed,
         tools_key=KEY,
@@ -393,11 +442,11 @@ def composed(world: World) -> Iterator[tuple[World, object, int]]:
     yield world, composition, port
 
 
-def test_the_api_keeps_the_approval_to_a_person_and_the_bundle_to_the_host(composed) -> None:
+def test_the_api_keeps_the_approval_to_a_person(composed) -> None:
     from oneberth.web.testing import bearer, client_of, launcher, running, signed_in
 
     world, composition, _ = composed
-    world.branch("proposals/api", {"agents/helper.toml": HELPER})
+    commit = world.branch("proposals/api", {"agents/helper.toml": HELPER})
 
     async def journey() -> None:
         async with running(composition) as person:
@@ -411,43 +460,39 @@ def test_the_api_keeps_the_approval_to_a_person_and_the_bundle_to_the_host(compo
             listed = (await person.get("/reviews/api/changelists")).json()["items"]
             assert [c["name"] for c in listed] == ["api"]
 
-            # The app on the host: a service token the launch secret makes, as the app does.
-            async with client_of(composition) as host:
-                made = await host.post(
-                    "/auth/services",
-                    json={"name": "fa1-host", "role": "reviews/host"},
-                    headers=launcher(composition),
-                )
-                assert made.status_code == 201, made.text
-                token = bearer(made.json()["secret"])
-                early = await host.get("/reviews/api/approved.bundle", headers=token)
-                assert early.status_code == 204
-                # The host's token reviews nothing.
-                for path in ("approve_changelist", "reject_changelist"):
-                    refused = await host.post(
-                        f"/reviews/api/{path}", json={"changelist_name": "api"}, headers=token
+            # The launch secret makes no token that reviews: the review app has no role for a
+            # service. A worker's token reads and approves nothing.
+            async with client_of(composition) as service:
+                for role in ("reviews/host", "reviews/approver"):
+                    refused = await service.post(
+                        "/auth/services",
+                        json={"name": "fa1-host", "role": role},
+                        headers=launcher(composition),
                     )
-                    assert refused.status_code == 403, refused.text
-                assert (
-                    await host.get("/reviews/api/changelists", headers=token)
-                ).status_code == 403
+                    assert refused.status_code != 201, refused.text
+                nobody = bearer("not-a-token")
+                for path in ("approve_changelist", "reject_changelist"):
+                    refused = await service.post(
+                        f"/reviews/api/{path}", json={"changelist_name": "api"}, headers=nobody
+                    )
+                    assert refused.status_code == 401, refused.text
+                gone = await person.get("/reviews/api/approved.bundle")
+                assert gone.status_code == 404
 
-                bad = await person.post(
-                    "/reviews/api/submit_changelist", json={"name": "api2", "branch": "nope"}
-                )
-                assert bad.status_code == 404, bad.text
-                approved = await person.post(
-                    "/reviews/api/approve_changelist", json={"changelist_name": "api"}
-                )
-                assert approved.status_code == 200, approved.text
-                again = await person.post(
-                    "/reviews/api/approve_changelist", json={"changelist_name": "api"}
-                )
-                assert again.status_code == 409
-                # A person's session does not fetch the bundle: that is the host's.
-                assert (await person.get("/reviews/api/approved.bundle")).status_code == 403
-                bundle = await host.get("/reviews/api/approved.bundle", headers=token)
-                assert bundle.status_code == 200 and bundle.content.startswith(b"# v2 git bundle")
+            bad = await person.post(
+                "/reviews/api/submit_changelist", json={"name": "api2", "branch": "nope"}
+            )
+            assert bad.status_code == 404, bad.text
+            assert world.head() != commit
+            approved = await person.post(
+                "/reviews/api/approve_changelist", json={"changelist_name": "api"}
+            )
+            assert approved.status_code == 200, approved.text
+            assert world.head() == commit
+            again = await person.post(
+                "/reviews/api/approve_changelist", json={"changelist_name": "api"}
+            )
+            assert again.status_code == 409
 
     asyncio.run(journey())
 
@@ -495,7 +540,7 @@ def test_the_designer_s_tools_check_and_submit_and_hold_no_approval(composed) ->
                     broken = await session.call_tool("validate_setup", {})
                     assert "problem(s):" in broken.content[0].text
                     assert "- flows/hello.yaml:" in broken.content[0].text
-        served = Reviews(world.at / "api-data", work=world.work, published=world.bundle)
+        served = Reviews(world.at / "api-data", work=world.work, setup=world.setup)
         [pending] = served.changelists("pending")
         assert (pending["name"], pending["title"]) == ("tools", "From the tools")
 

@@ -68,12 +68,6 @@ impl Folder {
         self.root.join("logs")
     }
 
-    /// What the app fetches before it uses it: the approved changes, as the review app's
-    /// bundle.
-    pub fn downloads(&self) -> PathBuf {
-        self.root.join("downloads")
-    }
-
     /// The folder and its parts. `secrets/` is the person's alone.
     pub fn ensure(&self) -> std::io::Result<()> {
         fs::create_dir_all(self.logs())?;

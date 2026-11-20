@@ -55,21 +55,30 @@ Each service keeps its data in a named volume of the project:
 | `todos` | `todo` | `/data` | the to-do list |
 
 - A volume mounted on a folder of the image takes the folder's owner. Each service writes its
-  volume as the image's own user.
-- No service mounts a host folder or the Docker socket.
+  volume as the image's own user, except the three that run as the setup folder's owner (below).
+- No service mounts the Docker socket. The setup folder is the one folder of the person's that
+  a service mounts.
 - `control` and `code` mount `robinauts.toml` of `compose/`, read-only. The app writes it from the
   setup folder at each start ([setup-folder.md](setup-folder.md)). A change recreates `control`
   and `code`, since both read it as they start.
 - `control` mounts one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`, which
   `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup folder's
   `flows/` at each start. A change recreates `control`.
-- `control` and `setup-git` mount `setup/` of `compose/`, read-only, at `/etc/fa1/setup`. The
-  app writes the setup folder's HEAD there at each start, as the git bundle `main.bundle`
-  ([review-app.md](review-app.md), "Main").
-- `setup-git` starts anew when that HEAD changes. Compose reads the HEAD's commit in
-  `FA1_SETUP_HEAD`, which is a variable of the service.
-- The volume `setup-work` takes its owner from the tool servers' image. `control` starts after
-  `setup-git`, and reads the volume as another user.
+
+## The setup folder
+
+The review app works in the person's setup folder ([review-app.md](review-app.md)).
+
+- `control` mounts the setup folder at `/setup`. `setup-git` mounts it there read-only.
+- `control`, `setup-git` and `setup-files` run as the user and the group that own the setup
+  folder. A file the review app writes in the folder then has the folder's owner.
+- The app reads the owner from the folder, and gives it to Compose as `FA1_UID` and `FA1_GID`,
+  with the folder's path as `FA1_SETUP`.
+- The service `owner` gives the volumes `control-data` and `setup-work` to that user. It runs
+  `chown` as root before the three services start, and ends. It has no network and two
+  capabilities, `CHOWN` and `DAC_READ_SEARCH`.
+- A mounted folder is one the review app can write whole. Mode 2 accepts it, as it accepts an
+  agent's accidents: the review app writes the folder at an approval alone.
 
 ## Secrets
 
@@ -94,8 +103,7 @@ alone, and its files by every user, so the containers' users read them.
 
 ## Starting
 
-1. The app writes the secrets files. `worker_token` starts empty. It publishes the setup
-   folder's HEAD: `git bundle create` in the setup folder.
+1. The app writes the secrets files. `worker_token` starts empty.
 2. `docker compose up` for `control` and the MCP servers. The app waits for `/auth/session`.
 3. The app lists the service tokens with `GET /auth/services`. A listed id equal to
    `worker_token_id` keeps the worker's token. Otherwise the app makes a new one, as below.
@@ -138,5 +146,7 @@ The app uses the engine the `docker` command reaches. The person installs it.
 
 ## Open
 
+- The setup folder on macOS, where Colima shares only some host folders with its VM, and maps
+  their owner.
 - Secrets files on macOS, where Colima shares only some host folders with its VM.
 - A container reaches the host and the LAN. Mode 2 accepts it.

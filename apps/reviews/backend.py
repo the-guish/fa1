@@ -1,14 +1,14 @@
 """Reviews: an application of FA1, beside Robinauts and neorc (docs/specs/review-app.md).
 
 A changelist is a branch of the setup folder that a submitter asks a person to review. The
-review app fetches the branch from the designer's working copy into a repository of its own,
-pins the commit, checks it, and shows its changes. An approver's yes moves `main` to that
-commit, and the app takes `main` to the setup folder at the next Refresh.
+review app fetches the branch from the designer's working copy into the setup folder's own
+repository, pins the commit, checks it, and shows its changes. An approver's yes fast-forwards
+the setup folder to that commit.
 
 `reviews` below gives the component, which ../backend.py composes. The records are in
 `reviews.db`, in the control plane's data directory, beside `robinauts.db`. The repository is
-`reviews/setup.git` beside it. The module imports the standard library, FastAPI and oneberth,
-and runs `git`, which the control image holds.
+the setup folder, which the control plane mounts. The module imports the standard library,
+FastAPI and oneberth, and runs `git`, which the control image holds.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter
 from oneberth.identity import Role, RoleTable
 from oneberth.web import Component, Context, permit
 from pydantic import BaseModel, Field
@@ -41,36 +41,31 @@ log = logging.getLogger("fa1.reviews")
 NAME = "reviews"
 FILE_NAME = "reviews.db"
 WORK_FOLDER = "reviews"
-"""The review app's own folder, in the data directory: its repository, `setup.git`, its git
-configuration and its temporary trees."""
+"""The review app's own folder, in the data directory: its temporary trees."""
 
 READ = "reviews/changelists:read"
 SUBMIT = "reviews/changelists:submit"
 APPROVE = "reviews/changelists:approve"
-PULL = "reviews/main:pull"
 
 SUBMITTER = "reviews/submitter"
 APPROVER = "reviews/approver"
-HOST = "reviews/host"
 
 ROLES = RoleTable(
     app=NAME,
-    permissions=frozenset({READ, SUBMIT, APPROVE, PULL}),
+    permissions=frozenset({READ, SUBMIT, APPROVE}),
     roles=(
         Role(SUBMITTER, frozenset({READ, SUBMIT}), people=True),
         Role(APPROVER, frozenset({READ, APPROVE}), people=True),
-        Role(HOST, frozenset({PULL})),
     ),
     default=APPROVER,
 )
-"""Two general roles for people, and one for the app on the host. The local user holds the
-first two, since a person may hold either. The app's service token holds the third."""
+"""Two general roles for people. The local user holds both, since a person may hold either."""
 
 SUBMITTED, APPROVED, REJECTED = "submitted", "approved", "rejected"
 PENDING = (SUBMITTED,)
 CLOSED = (APPROVED, REJECTED)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA = """
 CREATE TABLE changelists (
     name TEXT PRIMARY KEY,
@@ -86,9 +81,10 @@ CREATE TABLE changelists (
     closed_at TEXT
 ) STRICT;
 """
-BEFORE_BRANCHES = ("files", "baselines", "changelists", "folders")
-"""The tables of schema version 1, where a changelist held copies of files. No release had
-them, so a file at that version starts again."""
+BEFORE = ("files", "baselines", "changelists", "folders")
+"""The tables of the schema versions 1 and 2. At version 1 a changelist held copies of files, and
+at version 2 its commit was in a repository of the review app's own. No release had them, so a
+file at either version starts again."""
 
 BUSY_SECONDS = 10.0
 """How long a statement waits for a lock, as Robinauts' own file does."""
@@ -109,8 +105,13 @@ MOST_DESCRIPTION = 10_000
 
 CHANGELIST_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 BRANCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
-MAIN = "refs/heads/main"
-PUBLISHED = "refs/published/main"
+MAIN = "HEAD"
+"""The commit a changelist starts from: the one the setup folder is at."""
+BRANCHES = "refs/heads/changelists/"
+"""Where a changelist shows in the setup folder: the branch `changelists/<name>`, which
+`git branch` lists. The record holds the commit a person reviews, whatever the branch does."""
+BEFORE_BRANCH_REFS = "refs/changelists/"
+"""Where a changelist's commit was named before it was a branch."""
 
 STEERING = frozenset({".gitattributes", ".gitmodules", ".lfsconfig"})
 """Files that steer git on the person's computer. A changelist changes none of them."""
@@ -118,17 +119,31 @@ FILE_MODES = frozenset({"100644", "100755"})
 """A plain file's two modes. A link, and a repository inside the repository, have others."""
 
 NO_MAIN = (
-    "the setup folder has no commit yet, so a changelist has nothing to start from: commit the"
-    " setup folder, then press Refresh in FA1"
+    "the setup folder has no commit yet, so a changelist has nothing to start from: the person"
+    " commits the setup folder first"
 )
 NOT_ON_MAIN = (
-    "branch {branch!r} does not start from the current main: check it out, merge main into it"
-    " with git_merge, and submit it again"
+    "branch {branch!r} does not start from the commit the setup folder is at: check it out,"
+    " merge main into it with git_merge, and submit it again"
 )
 MAIN_MOVED = (
-    "main moved since changelist {name!r} was submitted, so it is not applied: the submitter"
-    " merges main into {branch!r} and submits it again"
+    "the setup folder moved since changelist {name!r} was submitted, so it is not applied: the"
+    " submitter merges main into {branch!r} and submits it again"
 )
+HAS_CHANGES = (
+    "the setup folder has changes not yet committed, so changelist {name!r} is not applied:"
+    " commit them or put them aside, then approve again"
+)
+
+GIT_SETTINGS = (
+    ("core.hooksPath", "/dev/null"),
+    ("core.fsmonitor", "false"),
+    ("gc.auto", "0"),
+    ("maintenance.auto", "false"),
+    ("protocol.ext.allow", "never"),
+)
+"""What git is told on each command, over the setup folder's own settings: no program the
+folder's settings name runs in the control plane."""
 
 
 class Invalid(ValueError):
@@ -243,44 +258,41 @@ def snapshot(source: Path, into: Path) -> int:
 
 
 class Reviews:
-    """The records and the repository, behind one lock."""
+    """The records and the setup folder, behind one lock."""
 
     def __init__(
         self,
         data_dir: Path,
         *,
         work: Path,
-        published: Path,
+        setup: Path,
         config: Path | None = None,
         flows: Path | None = None,
     ) -> None:
         self.file = data_dir / FILE_NAME
         self.home = data_dir / WORK_FOLDER
-        self.repo = self.home / "setup.git"
-        self.gitconfig = self.home / "gitconfig"
         self.work = work
         """The designer's working copy of the setup folder, which the review app fetches
         branches from and never runs git in."""
-        self.published = published
-        """The setup folder's HEAD, as a bundle the app writes at each start and refresh."""
+        self.setup = setup
+        """The person's setup folder, a git repository. A submit pins a commit in it, and an
+        approval fast-forwards it."""
         self.config = config
         self.flows = flows
         self.lock = threading.RLock()
-        self._synced: tuple[int, int] | None = None
 
     # The store.
 
     def set_up(self) -> None:
-        """Makes the file, its schema and the repository, or checks the version of the file
-        found."""
+        """Makes the file and its schema, or checks the version of the file found."""
         self.file.parent.mkdir(parents=True, exist_ok=True)
         self.home.mkdir(exist_ok=True)
         with closing(self.connect()) as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             found = connection.execute("PRAGMA user_version").fetchone()[0]
-            if found in (0, 1):
+            if found < SCHEMA_VERSION:
                 with connection:
-                    for old in BEFORE_BRANCHES if found == 1 else ():
+                    for old in BEFORE:
                         connection.execute(f"DROP TABLE IF EXISTS {old}")
                     connection.executescript(SCHEMA)
                     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -289,20 +301,18 @@ class Reviews:
                     f"{self.file} is at schema version {found}, and this build of reviews needs"
                     f" {SCHEMA_VERSION}"
                 )
-        # The working copy belongs to another user, the tool servers'. git serves a fetch from
-        # such a folder only when a configuration outside it says so. No hook runs here.
-        self.gitconfig.write_text(
-            "[safe]\n"
-            f"\tdirectory = {self.work}\n"
-            f"\tdirectory = {self.work / '.git'}\n"
-            "[core]\n\thooksPath = /dev/null\n"
-            "[gc]\n\tauto = 0\n"
-            '[protocol "ext"]\n\tallow = never\n',
-            encoding="utf-8",
+        # The repository the review app kept for itself, before it used the setup folder's.
+        shutil.rmtree(self.home / "setup.git", ignore_errors=True)
+        # A changelist named outside the branches becomes a branch.
+        listed = self.git(
+            "for-each-ref", "--format=%(objectname) %(refname)", BEFORE_BRANCH_REFS, check=False
         )
-        if not (self.repo / "HEAD").is_file():
-            self.repo.mkdir(parents=True, exist_ok=True)
-            self.git("init", "--quiet", "--bare", "--initial-branch", "main", str(self.repo))
+        for line in listed.decode("utf-8", "replace").splitlines():
+            commit, _, old = line.partition(" ")
+            name = old.removeprefix(BEFORE_BRANCH_REFS)
+            if self.rev(BRANCHES + name) is None:
+                self.git("update-ref", BRANCHES + name, commit, check=False)
+            self.git("update-ref", "-d", old, check=False)
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.file, timeout=BUSY_SECONDS)
@@ -314,23 +324,31 @@ class Reviews:
         with self.lock, closing(self.connect()) as connection, connection:
             yield connection
 
-    # git, on the review app's own repository.
+    # git, in the setup folder.
 
-    def git(self, *arguments: str, check: bool = True) -> bytes:
-        """Runs git on the review app's repository, with its own configuration and no other.
-        The standard output, or `GitFailed`."""
+    def run_git(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+        """Runs git in the setup folder, as FA1, with `GIT_SETTINGS` over the folder's own
+        settings and no other configuration."""
+        environ = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(self.home),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_AUTHOR_NAME": "FA1",
+            "GIT_AUTHOR_EMAIL": "fa1@localhost",
+            "GIT_COMMITTER_NAME": "FA1",
+            "GIT_COMMITTER_EMAIL": "fa1@localhost",
+            "GIT_CONFIG_COUNT": str(len(GIT_SETTINGS)),
+            "LC_ALL": "C",
+        }
+        for at, (key, value) in enumerate(GIT_SETTINGS):
+            environ[f"GIT_CONFIG_KEY_{at}"] = key
+            environ[f"GIT_CONFIG_VALUE_{at}"] = value
         try:
-            done = subprocess.run(
-                ["git", *arguments],
-                env={
-                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                    "HOME": str(self.home),
-                    "GIT_DIR": str(self.repo),
-                    "GIT_CONFIG_GLOBAL": str(self.gitconfig),
-                    "GIT_CONFIG_NOSYSTEM": "1",
-                    "GIT_TERMINAL_PROMPT": "0",
-                    "LC_ALL": "C",
-                },
+            return subprocess.run(
+                ["git", "-C", str(self.setup), *arguments],
+                env=environ,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=GIT_SECONDS,
@@ -338,6 +356,10 @@ class Reviews:
             )
         except subprocess.TimeoutExpired as slow:
             raise GitFailed(f"git {arguments[0]} took over {GIT_SECONDS:.0f} seconds") from slow
+
+    def git(self, *arguments: str, check: bool = True) -> bytes:
+        """The standard output of git in the setup folder, or `GitFailed`."""
+        done = self.run_git(*arguments)
         if check and done.returncode != 0:
             raise GitFailed(done.stderr.decode("utf-8", "replace").strip())
         return done.stdout
@@ -349,41 +371,7 @@ class Reviews:
 
     def descends(self, commit: str, ancestor: str) -> bool:
         """Whether `ancestor` is `commit` or one of its ancestors."""
-        asked = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", ancestor, commit],
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_DIR": str(self.repo)},
-            capture_output=True,
-            timeout=GIT_SECONDS,
-            check=False,
-        )
-        return asked.returncode == 0
-
-    def sync_main(self) -> None:
-        """Brings `main` to the setup folder's HEAD, as the app last wrote it. `main` stays
-        ahead of it only by approved changelists the setup folder does not hold yet. Any
-        other difference is the setup folder's to decide."""
-        with self.lock:
-            try:
-                found = self.published.stat()
-            except OSError:
-                return
-            seen = (found.st_mtime_ns, found.st_size)
-            if seen != self._synced:
-                try:
-                    self.git(
-                        "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
-                        str(self.published), f"+HEAD:{PUBLISHED}",
-                    )  # fmt: skip
-                except GitFailed as failed:
-                    log.warning("the setup folder's bundle was not read: %s", failed)
-                    return
-                self._synced = seen
-            published = self.rev(PUBLISHED)
-            main = self.rev(MAIN)
-            if published is None or main == published:
-                return
-            if main is None or not self.descends(main, published):
-                self.git("update-ref", MAIN, published)
+        return self.run_git("merge-base", "--is-ancestor", ancestor, commit).returncode == 0
 
     def changes(self, base: str, commit: str) -> list[Change]:
         """The files `commit` changes from `base`. A renamed file is one deleted and one
@@ -523,7 +511,6 @@ class Reviews:
 
     def changelists(self, state: Literal["pending", "closed"]) -> list[dict[str, Any]]:
         statuses = PENDING if state == "pending" else CLOSED
-        self.sync_main()
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 "SELECT name, title, branch, commit_id, status, created_at, submitted_at"
@@ -541,8 +528,8 @@ class Reviews:
 
     def applied(self, status: str, commit: str) -> bool:
         """Whether the setup folder holds an approved changelist's commit."""
-        published = self.rev(PUBLISHED)
-        return status == APPROVED and published is not None and self.descends(published, commit)
+        main = self.rev(MAIN)
+        return status == APPROVED and main is not None and self.descends(main, commit)
 
     def row(self, connection: sqlite3.Connection, name: str) -> sqlite3.Row:
         found = connection.execute("SELECT * FROM changelists WHERE name = ?", (name,)).fetchone()
@@ -552,7 +539,6 @@ class Reviews:
 
     def changelist(self, name: str) -> dict[str, Any]:
         """A changelist, with each file's old and new version."""
-        self.sync_main()
         with closing(self.connect()) as connection:
             row = self.row(connection, name)
         found = self.listed(row)
@@ -573,7 +559,7 @@ class Reviews:
     ) -> dict[str, Any]:
         """Fetches `branch` from the working copy, pins its commit as the changelist `name`,
         and checks it. A changelist that is submitted or rejected takes the new commit."""
-        if not CHANGELIST_NAME.fullmatch(name):
+        if not CHANGELIST_NAME.fullmatch(name) or ".." in name or name.endswith((".", ".lock")):
             raise Invalid(
                 f"{name!r} is not a changelist name: letters, digits, '.', '_' and '-', up to 100"
             )
@@ -591,7 +577,6 @@ class Reviews:
                 f" {MOST_DESCRIPTION}"
             )
         with self.writing() as connection:
-            self.sync_main()
             main = self.rev(MAIN)
             if main is None:
                 raise Conflict(NO_MAIN)
@@ -601,6 +586,12 @@ class Reviews:
             if before is not None and before["status"] == APPROVED:
                 raise Conflict(
                     f"changelist {name!r} is approved: give the next change another name"
+                )
+            shown = BRANCHES + name
+            if self.git("symbolic-ref", "--quiet", "HEAD", check=False).decode().strip() == shown:
+                raise Conflict(
+                    f"the setup folder has the branch changelists/{name} checked out: the person"
+                    " checks out another branch, then the submit goes through"
                 )
             incoming = f"refs/incoming/{name}"
             try:
@@ -622,7 +613,9 @@ class Reviews:
             try:
                 commit = self.rev(incoming)
                 if commit is None or commit == main:
-                    raise Conflict(f"branch {branch!r} holds no change: it is at main's commit")
+                    raise Conflict(
+                        f"branch {branch!r} holds no change: it is at the setup folder's commit"
+                    )
                 if not self.descends(commit, main):
                     raise Conflict(NOT_ON_MAIN.format(branch=branch))
                 problems = self.rules(self.changes(main, commit))
@@ -633,7 +626,12 @@ class Reviews:
                         problems, summary = self.checked(folder)
                 if problems:
                     raise Refused(problems)
-                self.git("update-ref", f"refs/changelists/{name}", commit)
+                try:
+                    self.git("update-ref", shown, commit)
+                except GitFailed as failed:
+                    raise Conflict(
+                        f"the setup folder did not take the branch changelists/{name}: {failed}"
+                    ) from failed
             finally:
                 self.git("update-ref", "-d", incoming, check=False)
             stamp = now()
@@ -659,15 +657,24 @@ class Reviews:
         return row
 
     def approve(self, name: str) -> dict[str, Any]:
-        """Moves `main` to the changelist's commit, when `main` is still that commit's
-        ancestor."""
+        """Fast-forwards the setup folder to the changelist's commit. The folder is still at
+        one of that commit's ancestors, and holds no change of its own."""
         with self.writing() as connection:
             row = self.submitted(connection, name, "an approval")
-            self.sync_main()
             main = self.rev(MAIN)
             if main is None or not self.descends(row["commit_id"], main):
                 raise Conflict(MAIN_MOVED.format(name=name, branch=row["branch"]))
-            self.git("update-ref", MAIN, row["commit_id"], main)
+            if self.git("status", "--porcelain", "--untracked-files=no").strip():
+                raise Conflict(HAS_CHANGES.format(name=name))
+            try:
+                self.git("merge", "--quiet", "--ff-only", row["commit_id"])
+            except GitFailed as failed:
+                raise Conflict(
+                    f"the setup folder did not take changelist {name!r}: {failed}"
+                ) from failed
+            # The folder's own branch holds the commit now. The changelist's branch goes,
+            # unless the person moved it.
+            self.git("update-ref", "-d", BRANCHES + name, row["commit_id"], check=False)
             connection.execute(
                 "UPDATE changelists SET status = ?, closed_at = ? WHERE name = ?",
                 (APPROVED, now(), name),
@@ -683,34 +690,21 @@ class Reviews:
             )
         return {"name": name, "status": REJECTED}
 
-    def approved_bundle(self) -> bytes | None:
-        """The approved commits the setup folder lacks, as a git bundle of `main`. `None` when
-        it lacks none."""
-        with self.lock:
-            self.sync_main()
-            main, published = self.rev(MAIN), self.rev(PUBLISHED)
-            if main is None or published is None or main == published:
-                return None
-            with self.tree() as folder:
-                bundle = folder / "approved.bundle"
-                self.git("bundle", "create", "--quiet", str(bundle), MAIN, f"^{published}")
-                return bundle.read_bytes()
-
 
 def reviews(
     data_dir: Path,
     *,
     work: Path,
-    published: Path,
+    setup: Path,
     config: Path | None = None,
     flows: Path | None = None,
     tools_key: str = "",
     tools_port: int = 8422,
 ) -> Component:
     """Reviews' component: its records in `data_dir`, the designer's working copy at `work`,
-    and the setup folder's HEAD in the bundle `published`. With `tools_key`, the two tools of
-    the designer are served on `tools_port` of the loopback address (tools.py)."""
-    store = Reviews(data_dir, work=work, published=published, config=config, flows=flows)
+    and the person's setup folder at `setup`. With `tools_key`, the two tools of the designer
+    are served on `tools_port` of the loopback address (tools.py)."""
+    store = Reviews(data_dir, work=work, setup=setup, config=config, flows=flows)
     router = APIRouter()
 
     @asynccontextmanager
@@ -746,15 +740,6 @@ def reviews(
     @router.post("/api/reject_changelist", dependencies=[permit(APPROVE)])
     def reject_changelist(body: Named) -> dict[str, Any]:
         return store.reject(body.changelist_name)
-
-    @router.get("/api/approved.bundle", dependencies=[permit(PULL)])
-    def approved_bundle() -> Response:
-        """The approved commits the setup folder lacks, for the app on the host. 204 when it
-        lacks none."""
-        bundle = store.approved_bundle()
-        if bundle is None:
-            return Response(status_code=204)
-        return Response(bundle, media_type="application/octet-stream")
 
     return Component(
         name=NAME,

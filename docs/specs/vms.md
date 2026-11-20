@@ -62,9 +62,7 @@ Each VM has four drives:
 
 - An update builds a new base and a new overlay. The data drive stays.
 - A reset of the code VM deletes its overlay and its data drive.
-- The control VM reads the launch secret and the model keys from its config drive. It reads
-  the setup folder's HEAD there too, as the bundle the app writes
-  ([review-app.md](review-app.md), "Main").
+- The control VM reads the launch secret and the model keys from its config drive.
 - The code VM reads its token, the Claude Code token and the GitHub token from its config drive.
 
 ## The build
@@ -93,6 +91,8 @@ The recipes are cloud-init files and shell scripts in this repository, under `vm
 
 ## Open
 
+- The setup folder in the control VM. Mode 2 mounts it, and a VM mounts no folder of the host:
+  the review app needs another way to it ([review-app.md](review-app.md)).
 - The link on Windows, where QEMU's Unix sockets need checking. A loopback TCP port is the
   fallback.
 - The config drive as a cloud-init seed, which needs the label `cidata`.

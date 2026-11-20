@@ -112,23 +112,31 @@ pub struct Project {
 }
 
 impl Project {
-    /// `docker compose` on the project, with its three variables. A new HEAD of the setup
-    /// folder is a new `FA1_SETUP_HEAD`, which starts the designer's git server anew: it
-    /// brings the working copy's `main` to that HEAD as it starts.
+    /// `docker compose` on the project, with its variables. The services that reach the setup
+    /// folder mount it, and run as its owner (docs/specs/containers.md, "The setup folder").
+    /// Before the person chose a folder, the variables name the app's own: Compose reads them
+    /// for every command, and no service starts then.
     fn compose(&self, what: &str, args: &[&str]) -> Action {
         let file = self.folder.compose().join("compose.yaml");
+        let chosen = self
+            .folder
+            .settings()
+            .setup_folder
+            .map(std::path::PathBuf::from);
+        let (uid, gid) = chosen
+            .as_deref()
+            .and_then(setup::owner)
+            .or_else(|| setup::owner(&self.folder.root))
+            .unwrap_or((1000, 1000));
+        let setup = chosen.unwrap_or_else(|| self.folder.compose().join("no-setup-folder"));
         Action::new(what, "docker", &["compose", "-f"])
             .arg(file.to_string_lossy())
             .env("FA1_PORT", self.port.to_string())
             .env("FA1_SECRETS", self.folder.secrets().to_string_lossy())
-            .env("FA1_SETUP_HEAD", setup::published(&self.published()))
+            .env("FA1_SETUP", setup.to_string_lossy())
+            .env("FA1_UID", uid.to_string())
+            .env("FA1_GID", gid.to_string())
             .args_from(args)
-    }
-
-    /// Where the setup folder's HEAD is published: `compose/setup/`, which the control plane
-    /// and the designer's git server mount.
-    pub fn published(&self) -> std::path::PathBuf {
-        self.folder.compose().join("setup")
     }
 
     pub fn build(&self) -> Action {
@@ -227,9 +235,8 @@ impl Project {
                 self.folder.secrets().display()
             ),
             format!(
-                "git -C {setup_folder} bundle create {} HEAD: the setup folder's HEAD, for the \
-                 review app and the designer's working copy",
-                self.published().join(setup::BUNDLE).display()
+                "mount {setup_folder} in the control plane, for the review app, and read-only in \
+                 the designer's git server"
             ),
             self.build().line(),
             format!(
@@ -302,8 +309,6 @@ impl Project {
             "setup.env",
             &env_file(&[("SUPERGATEWAY_API_KEY", &setup_key)]),
         )?;
-        // Compose mounts this folder: Docker would make a missing one, as root.
-        fs::create_dir_all(self.published())?;
         let mut code = vec![
             ("CLAUDE_CODE_OAUTH_TOKEN", keys.claude_code.as_str()),
             ("GITHUB_TOKEN", keys.github.as_str()),
@@ -370,13 +375,12 @@ impl Project {
         let setup_changed = self
             .write(keys, &setup)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
-        if let Some(chosen) = self.folder.settings().setup_folder {
-            setup::publish(
-                std::path::Path::new(&chosen),
-                &self.published(),
-                &logs,
-                &mut *say,
-            )?;
+        if let Some(chosen) = self.folder.settings().setup_folder
+            && setup::head(std::path::Path::new(&chosen), &logs).is_empty()
+        {
+            say(
+                "The setup folder has no commit yet: commit it, and the Flow designer can propose changes.",
+            );
         }
         say("Building the images. The first build takes several minutes.");
         self.build().run(&logs, &mut *say)?;
@@ -425,9 +429,9 @@ impl Project {
         )
     }
 
-    /// What a refresh does to the setup folder before the start: the changelists the person
-    /// approved in the review app, then the folder's upstream (docs/specs/setup-folder.md,
-    /// "Deploying it"). A folder with changes of its own takes neither.
+    /// What a refresh does to the setup folder before the start: a pull of the folder's upstream
+    /// (docs/specs/setup-folder.md, "Deploying it"). A folder with changes of its own takes
+    /// none. An approved changelist is in the folder already: the review app put it there.
     pub fn pull_setup(&self, keys: &Keys, say: &mut dyn FnMut(&str)) -> Result<(), String> {
         let logs = self.folder.logs();
         let chosen = self
@@ -438,29 +442,9 @@ impl Project {
         let at = std::path::Path::new(&chosen);
         if setup::has_changes(at, &logs, &mut *say)? {
             say(
-                "The setup folder has changes of its own: it is deployed as it is, without \
-                 the approved changes and without a pull.",
+                "The setup folder has changes of its own: it is deployed as it is, without a pull.",
             );
             return Ok(());
-        }
-        let launch = self.folder.read_secret("launch");
-        if launch.is_empty() || !control::is_up(self.port) {
-            say("The control plane is not running: no approved change is fetched.");
-        } else if let Some(bundle) = control::approved_bundle(self.port, &launch)? {
-            say("Applying the approved changes to the setup folder.");
-            let downloads = self.folder.downloads();
-            fs::create_dir_all(&downloads).map_err(|e| e.to_string())?;
-            let file = downloads.join("approved.bundle");
-            fs::write(&file, bundle).map_err(|e| format!("{}: {e}", file.display()))?;
-            setup::apply_approved(at, &file, &logs, &mut *say).map_err(|refused| {
-                format!(
-                    "{refused}\nThe setup folder holds commits the approved change does not \
-                     start from. Merge it by hand: git -C {chosen} merge FETCH_HEAD. Then \
-                     press Refresh again."
-                )
-            })?;
-        } else {
-            say("No approved change waits for the setup folder.");
         }
         setup::pull(at, &keys.github, &logs, say)
     }

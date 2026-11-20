@@ -284,8 +284,8 @@ function Outcome({ changelist }: { changelist: Changelist }) {
     changelist.status === "rejected"
       ? "Rejected. The submitter may submit it again under the same name."
       : changelist.applied
-        ? "Approved, and in the setup folder."
-        : "Approved. Press Refresh on the Status screen of FA1's Admin tab to apply it: the control plane then starts anew.";
+        ? "Approved, and in the setup folder. Press Refresh on the Status screen of FA1's Admin tab to deploy it: the control plane then starts anew."
+        : "Approved. The setup folder no longer holds its commit.";
   return (
     <p className="reviews-outcome" data-applied={changelist.applied ? "yes" : "no"}>
       {text}

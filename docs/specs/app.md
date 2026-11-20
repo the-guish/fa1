@@ -27,8 +27,7 @@ The app runs git on the setup folder, in every mode ([setup-folder.md](setup-fol
 | action | git |
 |---|---|
 | make a new setup folder | `git init`, `git add --all`, `git commit`: the starter |
-| publish its HEAD | `git rev-parse HEAD`, `git bundle create` |
-| apply the approved changes | `git fetch` of the review app's bundle, `git merge --ff-only` |
+| read its HEAD | `git rev-parse HEAD` |
 | pull its upstream | `git status`, `git pull --ff-only` |
 
 ## The window
@@ -73,11 +72,9 @@ It holds:
 
 - `settings.toml`: the mode and the port.
 - `secrets/`: the launch secret, the keys and the worker's token, readable by the person alone.
-- `downloads/`: the sources and the images the build reads, and the bundle of approved changes
-  a refresh fetches.
+- `downloads/`: the sources and the images the build reads.
 - `compose/` in mode 2, `vms/` in mode 3. `compose/apps/` holds FA1's applications and its
-  host of them ([apps.md](apps.md)). `compose/setup/` holds the setup folder's HEAD, as a git
-  bundle ([review-app.md](review-app.md)).
+  host of them ([apps.md](apps.md)).
 - `logs/`: the actions and the parts' output.
 
 ## Screens
@@ -114,8 +111,8 @@ as `~/bin`.
 ## Tests
 
 - The unit tests cover the pure functions of the core, with rows of inputs and outputs. One
-  runs the setup folder's git actions on real git: the starter's commit, the published HEAD and
-  a bundle of approved changes.
+  runs the setup folder's git actions on real git: the starter's commit, the folder's HEAD and
+  its owner.
 - The journey in `tests/e2e/` drives the real app and a real Docker engine through WebDriver. It
   walks the screens from a fresh folder to its removal. It runs on Linux, by hand:
   `tests/e2e/run.sh`.
