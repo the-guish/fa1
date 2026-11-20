@@ -15,13 +15,11 @@ as a part. A new layer, dependency or abstraction needs a reason in the specs.
 ## Tests
 
 - `cargo test --manifest-path app/Cargo.toml` runs the unit tests of the core's pure functions.
-- `tests/apps/run.sh <a checkout of Robinauts at the pinned commit>` runs the review app's tests,
-  on real git and without Docker. A change under `apps/reviews/` runs it.
 - `tests/e2e/run.sh` runs the person's journey on the real app and Docker. A change to a screen,
   an action or the Compose project runs it before it is done. A new feature adds steps to the
   journey.
-- `tests/apps/run.sh` builds the interface of `apps/` and runs its backend's tests, outside
-  Docker. A change to `apps/` runs it before it is done.
+- `tests/apps/run.sh` builds the interface of `apps/` and runs its backend's tests, on real git
+  and outside Docker. A change to `apps/` runs it before it is done.
 
 ## Docs
 

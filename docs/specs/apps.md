@@ -102,10 +102,6 @@ and `undici-types`.
   a file that holds tables and no version.
 - A refusal is an error of the application's own. oneberth ends the start with the
   application's name and its sentence.
-- The review app's starting folder is `folders/`, beside `data/` in the volume `control-data`.
-  `REVIEWS_ROOT` names it.
-- The review app keeps a git repository beside its file: `reviews/setup.git`, with `main` and
-  each changelist's commit.
 - The review app keeps each changelist's commit in the setup folder's repository.
 - The review app reads two paths of the environment. `REVIEWS_WORK` names the designer's
   working copy, and `REVIEWS_SETUP` the person's setup folder
@@ -144,18 +140,12 @@ and `undici-types`.
   builds the interface with its type check, as the image's first two stages do. It runs
   `tests/apps/test_reviews.py` in the environment the image's last stage installs.
 - `test_reviews.py` makes and checks `reviews.db` on real files, and starts `backend.py` as a
-  process. CI runs the script on every pull request.
-- The journey finds Reviews on the rail below neorc, opens it, reads its panel, asks its API,
-  and finds `reviews.db` in the data directory.
-- The journey finds Reviews on the rail below neorc. It proposes a changelist through the API,
-  opens it on the Pending list, reads its change side by side, and approves it. The folder then
-  holds the new version, and the data directory holds `reviews.db`.
-- `tests/apps/` holds an application's own tests, which run without Docker. The review app's
-  run on real git: a setup folder and a working copy.
-  `tests/apps/run.sh` runs them in Robinauts' environment, from a checkout at the pinned commit.
+  process. It runs the review app on real git: a setup folder and a working copy. CI runs the
+  script on every pull request.
 - The journey finds Reviews on the rail below neorc. It plays the designer through the three
   tool servers, opens the changelist on the Pending list, reads its change side by side, and
-  approves it. A Refresh then takes the change to the setup folder, and Robinauts serves it.
+  approves it. The approval puts the change in the setup folder. Robinauts serves it after a
+  Refresh.
 
 ## Open
 
