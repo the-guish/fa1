@@ -81,11 +81,14 @@ alone, and its files by every user, so the containers' users read them.
 | `launch` | `control` | standard input, from `/run/secrets/launch` |
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
 | `control.env` | `control` | variables: the Anthropic API key, the files server's key, the key of the designer's tool servers |
-| `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author |
+| `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author, and the key of each keyed tool server an agent of the code worker uses |
 | `files.env` | `files` | variables: the files server's key |
 | `setup.env` | `setup-files`, `setup-git` | variables: the key of the designer's tool servers |
 
 - Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
+- A worker reads a tool server's key from its own environment. The app reads each agent of the
+  setup folder, and writes a tool server's key to `code.env` when an agent of the worker
+  `claude` names that server in its `tools`.
 - The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
   out.
 
