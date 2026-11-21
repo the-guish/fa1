@@ -119,6 +119,11 @@ The model must be one of the agent's `models` in `agents/<agent>.toml`; add it t
 
   A repository's `branches` in `flows.toml` holds names or patterns: `["main", "release/*"]`.
   A branch input offers those that match; `["*"]` offers every branch.
+
+  The control plane holds no GitHub token. A `branch` input is for a public repository.
+
+  Robinauts checks a run's inputs against the form at every start. A start from neorc's page
+  and a start from a script are held to the same values.
 - **On a schedule, or from a webhook:** not yet. Say so to the person; FA1 plans it.
 - **A person's answer in the middle:** a step on an external queue (below).
 

@@ -422,7 +422,8 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert finished["output"] == "Hello, Ada", finished
 
     # The ship flow, from neorc's page: Robinauts' form, whose branch and project neorc asks
-    # Robinauts for as the person types. The run starts through Robinauts, which checks both.
+    # Robinauts for as the person types. The run starts at neorc's own route, where Robinauts'
+    # form checks both.
     def fetched(path: str, body: dict | None = None) -> list:
         return driver.execute_async_script(
             "const done = arguments[arguments.length - 1];"
@@ -467,13 +468,15 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     shipped = run_state(driver)
     assert shipped["status"] == "succeeded", shipped
     assert shipped["inputs"] == {"repo": "fa1", "branch": "main", "project": default["id"]}
-    # Robinauts refuses a branch the repository does not have, and a project not the person's.
-    for wrong in ({"branch": "no/such/branch"}, {"project": "0" * 8 + "-0000-4000-8000-" + "0" * 12}):
-        refused = fetched(
-            "/robinauts/api/flows/ship/runs",
-            {"inputs": {"repo": "fa1", "branch": "main", "project": default["id"], **wrong}},
-        )
-        assert refused[0] == 422, refused
+    # Robinauts refuses a branch the repository does not have, and a project not the person's:
+    # on its own route, and on neorc's, which neorc's page and a script start a run at.
+    for route in ("/robinauts/api/flows/ship/runs", "/neorc/flows/ship/runs"):
+        for wrong in ({"branch": "no/such/branch"}, {"project": "0" * 8 + "-0000-4000-8000-" + "0" * 12}):
+            refused = fetched(
+                route,
+                {"inputs": {"repo": "fa1", "branch": "main", "project": default["id"], **wrong}},
+            )
+            assert refused[0] == 422, (route, refused)
     press(driver, "a[data-app=robinauts]")
 
     # Reviews, FA1's own application, on the rail below neorc.
