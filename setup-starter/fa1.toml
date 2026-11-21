@@ -4,3 +4,8 @@
 [git]
 name = ""
 email = ""
+
+# The claude-cloud engine's tincan repository, such as https://github.com/<owner>/tincan.git
+# (FA1's claude-cloud/README.md). Empty, the agents on claude-cloud refuse their turns.
+[cloud]
+tincan = ""

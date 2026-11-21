@@ -285,8 +285,15 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "fa1.toml [git] name" in failure, failure
     fa1_toml.write_text(
         '[git]\nname = "Ada Lovelace"\nemail = "ada@example.com"\n'
+        '[cloud]\ntincan = "https://github.com/example/tincan.git"\n'
     )
-    git(SETUP, "commit", "-q", "-a", "-m", "My name")
+    # An agent on the claude-cloud engine, which the code worker runs beside claude-code.
+    (SETUP / "agents" / "cloud.toml").write_text(
+        'title = "Claude in the cloud"\nengine = "claude-cloud"\nmodels = ["cc-opus"]\n'
+        'worker = "claude"\nturn_timeout_seconds = 86400\nsystem_prompt = "Say what you did."\n'
+    )
+    git(SETUP, "add", "--all")
+    git(SETUP, "commit", "-q", "-m", "My name, and an agent in the cloud")
 
     # Start: the setup folder, the images, the control plane, the token, the code worker.
     act(driver, "#start", "Everything is up.", START_SECONDS)
@@ -294,6 +301,14 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     code_env = (HOME / "secrets" / "code.env").read_text()
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
+    # The code worker is FA1's image: it runs the agent on claude-cloud, with the tincan
+    # repository of fa1.toml.
+    assert "FA1_TINCAN_URL=https://github.com/example/tincan.git\n" in code_env
+    assert docker(
+        "exec", "fa1-code-1", "python", "-c",
+        "from robinauts.agent_engines.contract.ports import installed;"
+        " print(sorted(installed()))",
+    ).count("claude-cloud") == 1
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
     # The control plane mounts the setup folder, and runs as the folder's owner. The designer's
     # working copy starts at the folder's commit.
@@ -345,7 +360,9 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         "const done = arguments[arguments.length - 1];"
         "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
     )
-    assert sorted(a["id"] for a in agents["items"]) == ["assistant", "claude-code", "flow-designer"]
+    assert sorted(a["id"] for a in agents["items"]) == [
+        "assistant", "claude-code", "cloud", "flow-designer"
+    ]
 
     # Flows: the starter's hello flow runs on the control plane, started from Robinauts' page
     # as a person would, and its handler's result is the run's output.
@@ -432,7 +449,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     new = [e.text for e in driver.find_elements(By.CSS_SELECTOR, f"{panel} .reviews-line.new")]
     assert new == REVIEWED.splitlines(), new
     checked = driver.find_element(By.CSS_SELECTOR, ".reviews-checks").text
-    assert "4 agents" in checked, checked
+    assert "5 agents" in checked, checked
     press(driver, "[data-action=approve]")
     approved = ".reviews-header .reviews-status[data-status=approved]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, approved))
@@ -482,11 +499,11 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
 
     # Refresh: FA1 deploys the setup folder, and Robinauts serves the new agent. The review app
     # still sees the change in the folder.
-    assert serving_again() == ["assistant", "claude-code", "flow-designer"]
+    assert serving_again() == ["assistant", "claude-code", "cloud", "flow-designer"]
     driver.switch_to.window(main)
     act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
     assert git(SETUP, "rev-parse", "HEAD").strip() == head
-    assert serving_again() == ["assistant", "claude-code", "flow-designer", "reviewed"]
+    assert serving_again() == ["assistant", "claude-code", "cloud", "flow-designer", "reviewed"]
     closed = driver.execute_async_script(
         "const done = arguments[arguments.length - 1];"
         "fetch('/reviews/api/changelists?state=closed').then(r => r.json())"

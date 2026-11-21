@@ -10,6 +10,7 @@
 #
 # Every image is built here, from Robinauts at the pinned commit and from this folder. `apps/`
 # holds FA1's own image of the control plane: its applications, and its host of them.
+# `claude-cloud/` holds FA1's own image of the code worker, with the claude-cloud engine.
 
 name: fa1
 
@@ -88,10 +89,12 @@ services:
 
   # The Claude Code worker. It reads its token from a file, and reaches the worker listener on
   # 127.0.0.1, a broker the personal sign-in accepts.
+  # The image adds the claude-cloud engine to Robinauts' worker (claude-cloud/README.md).
   code:
     build:
-      context: *robinauts
-      dockerfile: extra-workers/claude-code-worker/Dockerfile
+      context: ./claude-cloud
+      additional_contexts:
+        robinauts: *robinauts
     network_mode: service:control
     depends_on: [control]
     environment:

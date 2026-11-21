@@ -87,6 +87,37 @@ const APPS: &[(&str, &str)] = &[
     ("vite.config.ts", include_str!("../../apps/vite.config.ts")),
 ];
 
+/// FA1's image of the code worker, as this repository's `claude-cloud/` holds it: Robinauts'
+/// worker with the claude-cloud engine (claude-cloud/README.md). It is written to
+/// `compose/claude-cloud/`, the build context of `code`.
+const CLOUD: &[(&str, &str)] = &[
+    ("Dockerfile", include_str!("../../claude-cloud/Dockerfile")),
+    (
+        "pyproject.toml",
+        include_str!("../../claude-cloud/pyproject.toml"),
+    ),
+    (
+        "src/fa1_cloud/__init__.py",
+        include_str!("../../claude-cloud/src/fa1_cloud/__init__.py"),
+    ),
+    (
+        "src/fa1_cloud/__main__.py",
+        include_str!("../../claude-cloud/src/fa1_cloud/__main__.py"),
+    ),
+    (
+        "src/fa1_cloud/engine.py",
+        include_str!("../../claude-cloud/src/fa1_cloud/engine.py"),
+    ),
+    (
+        "src/fa1_cloud/settings.py",
+        include_str!("../../claude-cloud/src/fa1_cloud/settings.py"),
+    ),
+    (
+        "src/fa1_cloud/tincan.py",
+        include_str!("../../claude-cloud/src/fa1_cloud/tincan.py"),
+    ),
+];
+
 /// What a developer's own build leaves in `apps/`. The app writes none of it.
 #[cfg(test)]
 const BUILT: &[&str] = &["node_modules", "dist", "vendor", "__pycache__"];
@@ -226,7 +257,7 @@ impl Project {
         vec![
             format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/"),
             format!(
-                "write {}: {}, robinauts.toml, flows/, apps/",
+                "write {}: {}, robinauts.toml, flows/, apps/, claude-cloud/",
                 self.folder.compose().display(),
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
@@ -289,6 +320,18 @@ impl Project {
             }
             folder::write_file(&path, text, 0o644)?;
         }
+        // The code worker's image, written anew in the same way.
+        let cloud = root.join("claude-cloud");
+        if cloud.is_dir() {
+            fs::remove_dir_all(&cloud)?;
+        }
+        for (name, text) in CLOUD {
+            let path = cloud.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            folder::write_file(&path, text, 0o644)?;
+        }
         self.folder.secret_or("launch", folder::launch_secret)?;
         let files_key = self.folder.secret_or("files_key", folder::random_secret)?;
         // One key for the designer's three tool servers.
@@ -317,6 +360,10 @@ impl Project {
             ("GIT_COMMITTER_NAME", setup.git_name.as_str()),
             ("GIT_COMMITTER_EMAIL", setup.git_email.as_str()),
         ];
+        // The claude-cloud engine's tincan repository, when the setup folder names one.
+        if !setup.tincan_url.is_empty() {
+            code.push(("FA1_TINCAN_URL", setup.tincan_url.as_str()));
+        }
         // The code worker holds the key of a tool server only while an agent of its own uses
         // that server (setup::code_secrets).
         for (name, key) in [
@@ -523,7 +570,7 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::{APPS, BUILT, TokenStep, collect_files, env_file, token_step};
+    use super::{APPS, BUILT, CLOUD, TokenStep, collect_files, env_file, token_step};
     use crate::control::{ServiceToken, WORKER_TOKEN_NAME};
 
     #[test]
@@ -538,6 +585,23 @@ mod tests {
             .collect();
         found.sort();
         let mut written: Vec<String> = APPS.iter().map(|(name, _)| name.to_string()).collect();
+        written.sort();
+        assert_eq!(written, found);
+    }
+
+    #[test]
+    fn the_app_writes_every_file_of_the_code_workers_image() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-cloud");
+        let mut found = Vec::new();
+        collect_files(&root, &root.join("src"), &mut found).unwrap();
+        let mut found: Vec<String> = found
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+            .filter(|path| !path.split('/').any(|part| BUILT.contains(&part)))
+            .chain(["Dockerfile".to_string(), "pyproject.toml".to_string()])
+            .collect();
+        found.sort();
+        let mut written: Vec<String> = CLOUD.iter().map(|(name, _)| name.to_string()).collect();
         written.sort();
         assert_eq!(written, found);
     }

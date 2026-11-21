@@ -87,6 +87,8 @@ pub struct Setup {
     pub flows: Vec<(PathBuf, Vec<u8>)>,
     pub git_name: String,
     pub git_email: String,
+    /// `[cloud] tincan` of fa1.toml: the repository of the claude-cloud engine, or nothing.
+    pub tincan_url: String,
     /// The variables that hold the keys the code worker needs: those of the tool servers its
     /// agents use (`code_secrets`).
     pub code_secrets: Vec<String>,
@@ -239,6 +241,11 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         }
     };
     let (git_name, git_email) = (git("name")?, git("email")?);
+    let tincan_url = match settings.get("cloud").and_then(|c| c.get("tincan")) {
+        None => String::new(),
+        Some(toml::Value::String(text)) => text.trim().to_string(),
+        Some(_) => return Err("fa1.toml [cloud] tincan: a string".to_string()),
+    };
 
     let models = table(folder, "models.toml")?;
     if let Some(key) = models.keys().find(|k| *k != "models") {
@@ -312,6 +319,7 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         flows,
         git_name,
         git_email,
+        tincan_url,
         code_secrets,
     })
 }
@@ -557,6 +565,7 @@ mod tests {
         // (file, text) -> words the error holds
         let cases = [
             ("fa1.toml", "[git]\nname = 1", "fa1.toml [git] name"),
+            ("fa1.toml", "[cloud]\ntincan = 1", "fa1.toml [cloud] tincan"),
             ("fa1.toml", "not toml", "fa1.toml:"),
             ("flows/flows.toml", "not toml", "flows/flows.toml:"),
             (
