@@ -33,6 +33,42 @@ SETUP = HOME.parent / "setup"
 """The person's setup folder, which FA1 makes at the Welcome screen (docs/specs/setup-folder.md)."""
 
 
+SHIP_FLOW = """name: ship
+version: 0.1.0
+inputs:
+  repo: string
+  branch: string
+  project: string
+output: tasks.pick
+steps:
+  pick:
+    queue: default
+    handler: robinauts_tasks:pick_number
+"""
+SHIP_FORM = """title = "Ship"
+
+[inputs.repo]
+label = "Repository"
+lov = "repository"
+
+[inputs.branch]
+label = "Branch"
+lov = "branch"
+of = "repo"
+
+[inputs.project]
+label = "Project"
+lov = "project"
+"""
+SHIP_REPOSITORY = """
+[repositories.fa1]
+url = "the-guish/fa1"
+branches = ["*"]
+"""
+"""A flow whose form searches as the person types: a branch of FA1's own repository on GitHub,
+read without a token, and a project of the person's."""
+
+
 def git(folder: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(folder), "-c", "user.name=Ada", "-c", "user.email=ada@example.com", *args],
@@ -287,6 +323,13 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         '[git]\nname = "Ada Lovelace"\nemail = "ada@example.com"\n'
     )
     git(SETUP, "commit", "-q", "-a", "-m", "My name")
+    # By hand too: a flow whose form searches a repository's branches and the person's projects.
+    (SETUP / "flows" / "ship.yaml").write_text(SHIP_FLOW)
+    (SETUP / "flows" / "ship.form.toml").write_text(SHIP_FORM)
+    with (SETUP / "flows" / "flows.toml").open("a") as settings:
+        settings.write(SHIP_REPOSITORY)
+    git(SETUP, "add", "flows")
+    git(SETUP, "commit", "-q", "-m", "The ship flow")
 
     # Start: the setup folder, the images, the control plane, the token, the code worker.
     act(driver, "#start", "Everything is up.", START_SECONDS)
@@ -377,6 +420,64 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     finished = run_state(driver)
     assert finished["status"] == "succeeded", finished
     assert finished["output"] == "Hello, Ada", finished
+
+    # The ship flow, from neorc's page: Robinauts' form, whose branch and project neorc asks
+    # Robinauts for as the person types. The run starts at neorc's own route, where Robinauts'
+    # form checks both.
+    def fetched(path: str, body: dict | None = None) -> list:
+        return driver.execute_async_script(
+            "const done = arguments[arguments.length - 1];"
+            "const body = arguments[1];"
+            "fetch(arguments[0], body === null ? {} : {method: 'POST',"
+            " headers: {'content-type': 'application/json'}, body: JSON.stringify(body)})"
+            ".then(async r => done([r.status, await r.text()]), e => done([0, String(e)]));",
+            path,
+            body,
+        )
+
+    projects = json.loads(fetched("/robinauts/api/projects")[1])["items"]
+    default = next(p for p in projects if p["name"] == "Default")
+    press(driver, "a[data-app=neorc]")
+    driver.execute_script("location.hash = '#/neorc/flows/ship'")
+    start_form = "form[aria-label='Start ship']"
+    WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, start_form))
+    form = driver.find_element(By.CSS_SELECTOR, start_form)
+    branch = form.find_element(By.ID, "form-input-branch")
+    assert branch.get_attribute("disabled") is not None
+    form.find_element(By.XPATH, ".//label[normalize-space()='fa1']/input").click()
+
+    def choose(box: str, typed: str, wanted: str) -> None:
+        field = form.find_element(By.ID, box)
+        field.click()
+        field.send_keys(typed)
+        option = f"//*[@id='{box}-options']/li[normalize-space()='{wanted}']"
+        WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.XPATH, option))
+        driver.find_element(By.XPATH, option).click()
+        assert field.get_attribute("value") == wanted
+
+    choose("form-input-branch", "mai", "main")
+    choose("form-input-project", "def", "Default")
+    form.find_element(By.XPATH, ".//button[@type='submit']").click()
+    WebDriverWait(driver, 30).until(
+        lambda d: d.execute_script("return location.hash").startswith("#/neorc/runs/")
+    )
+    run_id = driver.execute_script("return location.hash").removeprefix("#/neorc/runs/")
+    WebDriverWait(driver, 120, poll_frequency=2).until(
+        lambda d: run_state(d)["status"] in ("succeeded", "failed", "cancelled")
+    )
+    shipped = run_state(driver)
+    assert shipped["status"] == "succeeded", shipped
+    assert shipped["inputs"] == {"repo": "fa1", "branch": "main", "project": default["id"]}
+    # Robinauts refuses a branch the repository does not have, and a project not the person's:
+    # on its own route, and on neorc's, which neorc's page and a script start a run at.
+    for route in ("/robinauts/api/flows/ship/runs", "/neorc/flows/ship/runs"):
+        for wrong in ({"branch": "no/such/branch"}, {"project": "0" * 8 + "-0000-4000-8000-" + "0" * 12}):
+            refused = fetched(
+                route,
+                {"inputs": {"repo": "fa1", "branch": "main", "project": default["id"], **wrong}},
+            )
+            assert refused[0] == 422, (route, refused)
+    press(driver, "a[data-app=robinauts]")
 
     # Reviews, FA1's own application, on the rail below neorc.
     on_rail = "nav[aria-label=Applications] a[data-app]"
