@@ -405,14 +405,8 @@ impl Project {
         let files_key = self.folder.secret_or("files_key", folder::random_secret)?;
         // One key for the designer's three tool servers.
         let setup_key = self.folder.secret_or("setup_key", folder::random_secret)?;
-        self.folder.write_secret(
-            "control.env",
-            &env_file(&[
-                ("FA1_ANTHROPIC_KEY", &keys.anthropic),
-                ("FA1_FILES_KEY", &files_key),
-                ("FA1_SETUP_KEY", &setup_key),
-            ]),
-        )?;
+        self.folder
+            .write_secret("control.env", &control_env(keys, &files_key, &setup_key))?;
         self.folder.write_secret(
             "files.env",
             &env_file(&[("SUPERGATEWAY_API_KEY", &files_key)]),
@@ -666,6 +660,19 @@ pub fn token_step(
     }
 }
 
+/// The variables of `control`: the Anthropic API key, the GitHub token, and the keys of the
+/// files server and of the designer's tool servers. The GitHub token is `GH_TOKEN` there, which
+/// Robinauts hands the flows' handlers with the rest of the server's environment: a handler
+/// reads GitHub with it (docs/specs/containers.md, "Secrets").
+fn control_env(keys: &Keys, files_key: &str, setup_key: &str) -> String {
+    env_file(&[
+        ("FA1_ANTHROPIC_KEY", &keys.anthropic),
+        ("GH_TOKEN", &keys.github),
+        ("FA1_FILES_KEY", files_key),
+        ("FA1_SETUP_KEY", setup_key),
+    ])
+}
+
 /// `NAME=value` lines, as `docker compose` reads them, without quotes. A variable with no value
 /// is left out: the code worker refuses an empty `GITHUB_TOKEN`.
 fn env_file(pairs: &[(&str, &str)]) -> String {
@@ -689,8 +696,11 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::{APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, env_file, token_step};
+    use super::{
+        APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, control_env, env_file, token_step,
+    };
     use crate::control::{CODE, CURSOR, ServiceToken};
+    use crate::folder::Keys;
 
     #[test]
     fn the_app_writes_every_file_of_the_cursor_worker() {
@@ -788,6 +798,40 @@ mod tests {
         ];
         for (pairs, expected) in cases {
             assert_eq!(env_file(pairs), *expected);
+        }
+    }
+
+    #[test]
+    fn the_control_plane_holds_the_github_token_as_gh_token() {
+        // The Anthropic API key, the GitHub token, then the variables expected.
+        let cases = [
+            (
+                "sk-ant-1",
+                "github_pat_1",
+                "FA1_ANTHROPIC_KEY=sk-ant-1\nGH_TOKEN=github_pat_1\nFA1_FILES_KEY=f\nFA1_SETUP_KEY=s\n",
+            ),
+            (
+                "sk-ant-1",
+                "",
+                "FA1_ANTHROPIC_KEY=sk-ant-1\nFA1_FILES_KEY=f\nFA1_SETUP_KEY=s\n",
+            ),
+            (
+                "",
+                " github_pat_1 ",
+                "GH_TOKEN=github_pat_1\nFA1_FILES_KEY=f\nFA1_SETUP_KEY=s\n",
+            ),
+        ];
+        for (anthropic, github, expected) in cases {
+            let keys = Keys {
+                anthropic: anthropic.to_string(),
+                github: github.to_string(),
+                ..Keys::default()
+            };
+            assert_eq!(
+                control_env(&keys, "f", "s"),
+                expected,
+                "{anthropic:?} {github:?}"
+            );
         }
     }
 }

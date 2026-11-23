@@ -303,6 +303,8 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     )[1]
     code_env = (HOME / "secrets" / "code.env").read_text()
     assert "GITHUB_TOKEN" not in code_env
+    # The Keys screen holds no GitHub token, so the control plane's handlers get none either.
+    assert "GH_TOKEN" not in (HOME / "secrets" / "control.env").read_text()
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
     assert (HOME / "secrets" / "worker_token").read_text().startswith("ob_svc_")
     # The control plane mounts the setup folder, and runs as the folder's owner. The designer's

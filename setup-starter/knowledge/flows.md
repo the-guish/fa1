@@ -90,7 +90,9 @@ steps:
   `result_of`. An answer without it fails the task, with what the agent said.
 - A task may run twice: make each handler safe to repeat (check before opening a second pull
   request).
-- The agents reach GitHub with the token of their worker. A handler holds no token.
+- The agents reach GitHub with the token of their worker. A handler reads GitHub with the
+  person's GitHub token, in `GH_TOKEN` of its environment: the variable is missing when the
+  person gave FA1 no GitHub token.
 
 ## Models
 

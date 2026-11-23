@@ -65,8 +65,8 @@ The Flow designer reaches the setup folder through three tool servers alone
   runs on the server's own worker, with the Anthropic API key, and has no shell.
 - The code worker holds the key of the three tool servers only while an agent of its own uses
   them ([containers.md](containers.md), "Secrets").
-- A flow's handler is code that runs in the control plane. The review shows each file whole,
-  and marks the handlers.
+- A flow's handler is code that runs in the control plane, with the person's GitHub token. The
+  review shows each file whole, and marks the handlers.
 - A setup folder on GitHub takes changes the other way too: the agent Claude Code clones it,
   pushes a branch and opens a pull request ([setup-folder.md](setup-folder.md), "Changing it
   through the agents").
@@ -97,6 +97,9 @@ A flow's `version` rises at each change. The server keeps the first content of e
   `ROBINAUTS_FLOWS_DIR` naming it.
 - `control` then uploads the flows at its start, and runs neorc's worker beside the server: the
   handlers run there, and reach Robinauts' API with a token the server makes.
+- The handlers read GitHub with the person's GitHub token, in `GH_TOKEN`
+  ([containers.md](containers.md), "Secrets"). An agent reaches GitHub with the token of its own
+  worker.
 - A refresh restarts `control`: a run in progress ends, and a new version of a flow cancels the
   runs of the old one.
 
