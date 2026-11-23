@@ -13,6 +13,7 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 |---|---|---|
 | `control` | FA1's `apps/Dockerfile`, with Robinauts at the pinned commit | the control plane, in the local mode, on SQLite: Robinauts, neorc and FA1's applications |
 | `code` | the Claude Code worker's `Dockerfile`, at the same commit | the coding agents |
+| `cursor` | FA1's `workers/cursor/Dockerfile`, with Robinauts at the same commit | the coding agents on Cursor; optional ([cursor-worker.md](cursor-worker.md)) |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
 | `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
@@ -27,8 +28,8 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 - The project has one network, with a way out. Every service reaches the others by name.
 - `control` publishes its front listener on the host's `127.0.0.1`, at the app's port. No other
   service publishes a port.
-- `code` shares the network of `control` (`network_mode: service:control`).
-- The worker listener is on the loopback of `control`. `code` alone reaches it there, at
+- `code` and `cursor` share the network of `control` (`network_mode: service:control`).
+- The worker listener is on the loopback of `control`. The two workers alone reach it there, at
   `http://127.0.0.1:8421/robinauts`.
 
 The worker in the personal sign-in accepts a broker on loopback or a private address. A
@@ -50,6 +51,8 @@ Each service keeps its data in a named volume of the project:
 | `control-data` | `control` | `/var/lib/robinauts` | `data/`: `robinauts.db`, `oneberth.db`, `neorc.db`, and a file per application of FA1, such as `reviews.db`; `data/reviews/setup.git`: the review app's repository |
 | `code-claude` | `code` | `/var/lib/claude` | Claude Code's transcripts |
 | `code-workspaces` | `code` | `/workspace` | a directory per conversation |
+| `cursor-home` | `cursor` | `/var/lib/cursor` | the home of Cursor's CLI: its chats |
+| `cursor-workspaces` | `cursor` | `/workspace` | a directory per conversation |
 | `files` | `files` | `/agents-fs` | the folder of the files tool |
 | `setup-work` | `setup-files`, `setup-git`; `control`, read-only | `/work` | `setup/`: the designer's working copy of the setup folder |
 | `todos` | `todo` | `/data` | the to-do list |
@@ -58,13 +61,13 @@ Each service keeps its data in a named volume of the project:
   volume as the image's own user, except the three that run as the setup folder's owner (below).
 - No service mounts the Docker socket. The setup folder is the one folder of the person's that
   a service mounts.
-- `control` and `code` mount `robinauts.toml` of `compose/`, read-only. The app writes it from the
-  setup folder at each start ([setup-folder.md](setup-folder.md)). A change recreates `control`
-  and `code`, since both read it as they start.
-- `control` and `code` mount one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`,
+- `control`, `code` and `cursor` mount `robinauts.toml` of `compose/`, read-only. The app writes
+  it from the setup folder at each start ([setup-folder.md](setup-folder.md)). A change
+  recreates the three, since each reads it as it starts.
+- The same three mount one folder of `compose/`, read-only: `flows/` at `/etc/fa1/flows`,
   which `ROBINAUTS_FLOWS_DIR` names ([flows.md](flows.md)). The app writes it from the setup
-  folder's `flows/` at each start. A change recreates both.
-- `code` reads `[repositories]` of `flows/flows.toml` there. A conversation of the code worker
+  folder's `flows/` at each start. A change recreates them.
+- `code` and `cursor` read `[repositories]` of `flows/flows.toml` there. A conversation of the code worker
   gets a worktree of each repository, and a code task names one of them.
 
 ## The setup folder
@@ -93,13 +96,16 @@ alone, and its files by every user, so the containers' users read them.
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
 | `control.env` | `control` | variables: the Anthropic API key, the files server's key, the key of the designer's tool servers |
 | `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author, and the key of each keyed tool server an agent of the code worker uses |
+| `cursor_token` | `cursor` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/cursor_token` |
+| `cursor.env` | `cursor` | variables: the Cursor API key, the GitHub token, the Git author, and the key of each keyed tool server an agent of the Cursor worker uses; empty while that worker stays out |
 | `files.env` | `files` | variables: the files server's key |
 | `setup.env` | `setup-files`, `setup-git` | variables: the key of the designer's tool servers |
 
 - Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
 - A worker reads a tool server's key from its own environment. The app reads each agent of the
   setup folder, and writes a tool server's key to `code.env` when an agent of the worker
-  `claude` names that server in its `tools`.
+  `claude` names that server in its `tools`. `cursor.env` follows the worker `cursor` the same
+  way.
 - The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
   out.
 
@@ -111,8 +117,12 @@ alone, and its files by every user, so the containers' users read them.
    `worker_token_id` keeps the worker's token. Otherwise the app makes a new one, as below.
 4. `docker compose up` for `code`. With a new token, `--force-recreate` starts a new container,
    since the worker reads its token as it starts.
-5. `/health` answers `ok` once `code` reaches the worker listener. The app asks for a ticket and
-   opens Robinauts.
+5. The Cursor worker, when it runs ([cursor-worker.md](cursor-worker.md), "The key"): steps 3
+   and 4 again, for a token named `fa1-cursor` with the resource `cursor`, kept in
+   `cursor_token` and `cursor_token_id`, and the service `cursor`. Otherwise the app removes
+   the container of `cursor`.
+6. `/health` answers `ok` once each worker reaches the worker listener. The app asks for a
+   ticket and opens Robinauts.
 
 A token the launch secret makes lives in the memory of `control`, so a stop of `control` ends it.
 The app makes a new token in two requests:
@@ -122,7 +132,11 @@ The app makes a new token in two requests:
    resource `claude`. The app writes its secret to `worker_token` and its id to
    `worker_token_id`.
 
-A new token restarts `code` alone. `control` keeps running, with its conversations and turns.
+A new token restarts its worker alone. `control` keeps running, with its conversations and turns.
+
+The service `cursor` has the Compose profile `cursor`. The build names the profile only when the
+Cursor worker runs. Every other command names it always, so a stop and a removal reach the
+worker's container.
 
 ## The code worker
 

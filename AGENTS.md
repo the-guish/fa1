@@ -7,6 +7,9 @@ Every session starts by reading these docs in full:
 - [docs/specs/containers.md](docs/specs/containers.md)
 - [docs/specs/vms.md](docs/specs/vms.md)
 
+A change to `workers/cursor/` reads [docs/specs/cursor-worker.md](docs/specs/cursor-worker.md)
+first.
+
 ## Scope
 
 FA1 is a project of its own. It takes from Robinauts only what it needs, and treats Robinauts
@@ -20,6 +23,9 @@ as a part. A new layer, dependency or abstraction needs a reason in the specs.
   journey.
 - `tests/apps/run.sh` builds the interface of `apps/` and runs its backend's tests, on real git
   and outside Docker. A change to `apps/` runs it before it is done.
+- `tests/workers/run.sh` runs the Cursor worker's tests on a stand-in for Cursor's CLI, then
+  builds the worker's image and holds a conversation with it. A change to `workers/` runs it
+  before it is done.
 
 ## Docs
 

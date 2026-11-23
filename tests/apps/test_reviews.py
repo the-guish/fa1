@@ -136,7 +136,7 @@ def test_a_branch_is_submitted_reviewed_approved_and_reaches_the_setup_folder(wo
     )
     made = world.store.submit("helper", "proposals/helper", "A helper", "Adds the agent Helper.")
     assert made["status"] == "submitted" and made["commit"] == commit
-    assert made["summary"][0] == "4 agents, 5 models"
+    assert made["summary"][0] == "5 agents, 9 models"
 
     [listed] = world.store.changelists("pending")
     assert (listed["name"], listed["title"], listed["applied"]) == ("helper", "A helper", False)
@@ -368,7 +368,7 @@ def test_validate_setup_reads_the_working_copy_as_it_is_and_follows_no_link(worl
     assert world.store.validate_setup() == (
         [],
         [
-            "3 agents, 5 models",
+            "4 agents, 9 models",
             "2 flows: code_and_review 0.2.0, hello 0.1.0",
             "2 handler modules, read and not run",
         ],
@@ -757,7 +757,7 @@ def test_the_designer_s_tools_check_and_submit_and_hold_no_approval(composed) ->
                     valid = await session.call_tool("validate_setup", {})
                     assert not valid.isError
                     assert valid.content[0].text.startswith("The setup folder passes its checks:")
-                    assert "- 4 agents, 5 models" in valid.content[0].text
+                    assert "- 5 agents, 9 models" in valid.content[0].text
 
                     missing = await session.call_tool(
                         "submit_changelist", {"name": "t", "branch": "nope", "title": "T"}
@@ -780,3 +780,35 @@ def test_the_designer_s_tools_check_and_submit_and_hold_no_approval(composed) ->
         assert (pending["name"], pending["title"]) == ("tools", "From the tools")
 
     asyncio.run(journey())
+
+
+def test_the_checks_take_the_cursor_worker_as_the_app_deploys_it(tmp_path: Path) -> None:
+    """The Cursor worker is optional, and the app names it at the deploy. The checks pass an
+    agent on it whether the configuration that runs names the worker or not, and pass a tree
+    without such an agent while that configuration still names it."""
+    from reviews import checks
+
+    with_worker = tmp_path / "robinauts.toml"
+    with_worker.write_text(BASE.read_text() + "\n[workers.cursor]\nexternal = true\n")
+    models = {"cursor-auto": {"provider": "cursor", "name": "auto"}}
+    agent = {"title": "An agent", "system_prompt": "x", "models": ["cursor-auto"]}
+    on_cursor = {**agent, "engine": "cursor", "worker": "cursor"}
+    elsewhere = {**agent, "engine": "echo"}
+    # FA1's fixed part names the code worker, so every tree has an agent on it.
+    code = {**agent, "engine": "claude-code", "worker": "claude"}
+    # (the configuration that runs, the tree's agents) -> the problems
+    cases = [
+        (BASE, {"cursor": on_cursor}, []),
+        (with_worker, {"cursor": on_cursor}, []),
+        (with_worker, {"other": elsewhere}, []),
+        (BASE, {"other": elsewhere}, []),
+    ]
+    for deployed, agents, expected in cases:
+        result = checks.Result()
+        checks.configuration(models, {**agents, "code": code}, deployed, result)
+        assert result.problems == expected, (deployed.name, agents, result.problems)
+    # An engine no worker of FA1's runs is still refused.
+    result = checks.Result()
+    stray = {"x": {**on_cursor, "worker": "default"}, "code": code}
+    checks.configuration(models, stray, BASE, result)
+    assert len(result.problems) == 1 and "engine 'cursor'" in result.problems[0], result.problems

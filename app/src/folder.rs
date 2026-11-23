@@ -49,6 +49,9 @@ pub struct Keys {
     pub claude_code: String,
     #[serde(default)]
     pub github: String,
+    /// The Cursor API key. Without it, the Cursor worker stays out (docs/specs/cursor-worker.md).
+    #[serde(default)]
+    pub cursor: String,
 }
 
 impl Folder {

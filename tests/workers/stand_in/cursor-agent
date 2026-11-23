@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""A stand-in for Cursor's CLI, for the worker's tests: it takes the command line the worker
+gives the real one, and prints ``stream-json`` lines in the documented shapes
+(https://cursor.com/docs/cli/reference/output-format). It reaches no model: the answer echoes
+the chat's prompts, so a test sees what a resumed chat remembers.
+
+It keeps each chat where the real CLI does, ``$HOME/.cursor/chats/<the workspace's MD5>/<chat>``,
+and answers a chat it does not hold as a new one, as the real CLI does. It appends what it was given (the
+command line, the variables the worker names, the workspace's files) to ``$HOME/.stand-in/runs``.
+
+The prompt picks the behaviour:
+
+    poison ...           ends with a code that is not 0 and a line on the standard error
+    sleep ...            starts a command that outlives it, and waits for a minute
+    write <file> <text>  writes the file in the workspace, as an edit tool call
+    call <tool> <json>   calls a tool of the workspace's tool server `robinauts`, over MCP
+    anything else        answers with the chat's prompts
+"""
+
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.request
+import uuid
+
+args = sys.argv[1:]
+home = pathlib.Path(os.environ["HOME"]) / ".stand-in"
+home.mkdir(parents=True, exist_ok=True)
+
+
+def option(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+def say(**line):
+    print(json.dumps(line), flush=True)
+
+
+if "--print" not in args or option("--output-format") != "stream-json":
+    sys.exit("the stand-in runs in print mode with stream-json alone")
+if not os.environ.get("CURSOR_API_KEY"):
+    sys.exit("Error: Authentication required. Set CURSOR_API_KEY.")
+
+prompt = args[-1].lstrip("\n")
+workspace = pathlib.Path(option("--workspace"))
+resumed = next((a.split("=", 1)[1] for a in args if a.startswith("--resume=")), None)
+chat = resumed or str(uuid.uuid4())
+chats = pathlib.Path(os.environ["HOME"]) / ".cursor" / "chats"
+stored = chats / hashlib.md5(str(workspace).encode()).hexdigest() / chat / "prompts.json"
+stored.parent.mkdir(parents=True, exist_ok=True)
+prompts = json.loads(stored.read_text()) if stored.exists() else []
+prompts.append(prompt)
+stored.write_text(json.dumps(prompts))
+
+cursor = workspace / ".cursor"
+with (home / "runs").open("a") as runs:
+    record = {
+        "args": args,
+        "cwd": os.getcwd(),
+        "environment": {
+            name: value
+            for name, value in os.environ.items()
+            if name.startswith(("CURSOR_", "FA1_CURSOR_MCP_", "GITHUB_"))
+        },
+        "files": {
+            str(path.relative_to(workspace)): path.read_text()
+            for path in sorted(cursor.rglob("*"))
+            if path.is_file()
+        },
+    }
+    runs.write(json.dumps(record) + "\n")
+
+say(type="system", subtype="init", apiKeySource="env", cwd=str(workspace), session_id=chat,
+    model=option("--model"), permissionMode="default")
+say(type="user", message={"role": "user", "content": [{"type": "text", "text": prompt}]},
+    session_id=chat)
+
+words = prompt.split(" ", 2)
+if words[0] == "poison":
+    print("\x1b[33m⚠ Warning: the model is poisoned\x1b[0m", file=sys.stderr)
+    sys.exit(1)
+if words[0] == "sleep":
+    child = subprocess.Popen(["sleep", "60"])
+    (workspace / "child.pid").write_text(str(child.pid))
+    time.sleep(60)
+
+answer = " | ".join(prompts)
+if words[0] == "write":
+    # The CLI's edit tool, as CLI 2026.11.22 prints it. Its call ids hold two lines.
+    path = workspace / words[1]
+    call_id = "call-w1\nfc_w1"
+    call = {"path": str(path), "streamContent": words[2]}
+    say(type="assistant", message={"role": "assistant", "content": [
+        {"type": "text", "text": "Writing."}]}, session_id=chat, timestamp_ms=1)
+    say(type="tool_call", subtype="started", call_id=call_id,
+        tool_call={"editToolCall": {"args": call}}, session_id=chat)
+    path.write_text(words[2])
+    done = {"path": str(path), "linesAdded": 1, "linesRemoved": 0,
+            "message": f"Wrote contents to {path}"}
+    say(type="tool_call", subtype="completed", call_id=call_id,
+        tool_call={"editToolCall": {"args": call, "result": {"success": done}}},
+        session_id=chat)
+    answer = f"wrote {words[1]}"
+if words[0] == "call":
+    # A tool of a tool server, as CLI 2026.11.22 prints it.
+    servers = json.loads((cursor / "mcp.json").read_text())["mcpServers"]
+    arguments = json.loads(words[2])
+
+    def rpc(number, method, params):
+        body = {"jsonrpc": "2.0", "id": number, "method": method, "params": params}
+        request = urllib.request.Request(
+            servers["robinauts"]["url"],
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read())["result"]
+
+    rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                          "clientInfo": {"name": "stand-in", "version": "1"}})
+    listed = [tool["name"] for tool in rpc(2, "tools/list", {})["tools"]]
+    call_id = "call-f1\nfc_f1"
+    call = {"name": f"robinauts-{words[1]}", "args": arguments, "toolCallId": call_id,
+            "providerIdentifier": "robinauts", "toolName": words[1]}
+    say(type="tool_call", subtype="started", call_id=call_id,
+        tool_call={"mcpToolCall": {"args": call}}, session_id=chat)
+    result = rpc(3, "tools/call", {"name": words[1], "arguments": arguments})
+    text = result["content"][0]["text"]
+    done = {"content": [{"text": {"text": text}}], "isError": result.get("isError", False)}
+    say(type="tool_call", subtype="completed", call_id=call_id,
+        tool_call={"mcpToolCall": {"args": call, "result": {"success": done}}},
+        session_id=chat)
+    answer = f"tools {','.join(listed)}: {text}"
+
+# The text, as --stream-partial-output gives it: the deltas, then the same text once more.
+message = lambda text: {"role": "assistant", "content": [{"type": "text", "text": text}]}
+if "--stream-partial-output" in args:
+    half = len(answer) // 2
+    for piece in (answer[:half], answer[half:]):
+        say(type="assistant", message=message(piece), session_id=chat, timestamp_ms=1)
+say(type="assistant", message=message(answer), session_id=chat)
+say(type="result", subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+    result=answer, session_id=chat, request_id="r1")

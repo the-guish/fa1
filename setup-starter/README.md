@@ -8,7 +8,7 @@ pulls it and deploys it. Keys are never here: FA1 keeps them in its own folder.
 |---|---|
 | `fa1.toml` | FA1's settings: the git author of the agents' commits |
 | `models.toml` | the models the agents may use: `[models.<id>]` |
-| `agents/<id>.toml` | one agent each: title, engine, models, tools, instructions |
+| `agents/<id>.toml` | one agent each: title, engine, models, tools, instructions. `cursor.toml` runs on Cursor, once FA1's Keys screen holds a Cursor API key |
 | `knowledge/` | Markdown the agents read: how I work, my projects, my conventions |
 | `flows/` | reusable flows: neorc YAML, their handlers, `flows.toml` |
 

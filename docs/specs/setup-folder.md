@@ -52,14 +52,17 @@ You review the pull request you are given. Say "ready" or "not ready", and why.
 """
 ```
 
-- A model's provider is one FA1 names: `anthropic` (the API key) or `claude-code` (the Claude
-  Code token).
+- A model's provider is one FA1 names: `anthropic` (the API key), `claude-code` (the Claude
+  Code token) or `cursor` (the Cursor API key).
 - An agent's tools are the tool servers FA1 runs: `fetch`, `browser`, `files`, `todo`,
   `diagrams`, the designer's `setup-files`, `setup-git` and `setup-review`, and Robinauts' own
   `sessions`.
 - An agent's engine and worker are the person's to choose. The app gives a keyed tool server's
   key to the worker of each agent that names the server ([containers.md](containers.md),
   "Secrets").
+- An agent on Cursor names the engine `cursor` and the worker `cursor`
+  ([cursor-worker.md](cursor-worker.md)). FA1 deploys it once the Keys screen holds a Cursor API
+  key.
 
 ### `knowledge/`
 
@@ -71,7 +74,8 @@ them in their clone of the setup folder (below). An agent's instructions may poi
 - The Welcome screen asks for the folder's location. The location may be an existing setup
   folder, an empty folder, or a folder that does not exist yet.
 - An empty or new folder gets the starter, `setup-starter/` in this repository: FA1's default
-  models (Haiku, Sonnet and Opus), the agents Assistant, Claude Code and Flow designer, a
+  models (Haiku, Sonnet and Opus, and four on Cursor), the agents Assistant, Claude Code,
+  Cursor and Flow designer, a
   knowledge page on flows, Robinauts' example flow and handlers, and a README. FA1 runs
   `git init` in it when it is not a repository.
 - FA1 commits the starter it writes, as FA1. A changelist starts from a commit
@@ -90,7 +94,8 @@ FA1 reads the setup folder at each start and at each refresh:
    line, and keeps what runs.
 2. FA1 writes Robinauts' configuration (`robinauts.toml`) in `compose/`: FA1's fixed part,
    `compose/robinauts.base.toml`, then the folder's models and agents.
-3. When the setup changed, `control` and `code` start anew: both read it as they start.
+3. When the setup changed, `control` and the code workers start anew: each reads it as it
+   starts.
 
 `control` mounts the folder itself, for the review app ([review-app.md](review-app.md)). The
 review app and the designer's working copy take the folder's commit as `main`.

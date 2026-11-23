@@ -41,6 +41,10 @@ class Result:
     summary: list[str] = field(default_factory=list)
 
 
+CURSOR_WORKER = "cursor"
+"""The worker of FA1's Cursor container, which the app adds to the configuration itself."""
+
+
 def table(tree: Path, name: str, into: Result) -> dict[str, Any] | None:
     """A TOML file of the tree, as its tables. A file that is missing or is not TOML is a
     problem, and `None`."""
@@ -124,6 +128,14 @@ def configuration(
         into.summary.append(f"the configuration that runs cannot be read: {unreadable}")
         return
     tables = {key: value for key, value in fixed.items() if key not in ("models", "agents")}
+    # The Cursor worker is optional (docs/specs/cursor-worker.md): FA1 names it at the deploy
+    # when an agent runs on it, and Robinauts refuses a worker no agent names. The tree is
+    # checked as FA1 would deploy it with a Cursor API key.
+    workers = dict(tables.get("workers", {}))
+    workers.pop(CURSOR_WORKER, None)
+    if any(isinstance(a, Mapping) and a.get("worker") == CURSOR_WORKER for a in agents.values()):
+        workers[CURSOR_WORKER] = {"external": True}
+    tables["workers"] = workers
     try:
         configure({**tables, "models": models, "agents": agents}, {})
     except ConfigError as refused:

@@ -38,6 +38,51 @@ const FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The Cursor worker's build context, as this repository's `workers/cursor/` holds it
+/// (docs/specs/cursor-worker.md). It is written to `compose/workers/cursor/`.
+const CURSOR_WORKER: &[(&str, &str)] = &[
+    (
+        "Dockerfile",
+        include_str!("../../workers/cursor/Dockerfile"),
+    ),
+    (
+        "pyproject.toml",
+        include_str!("../../workers/cursor/pyproject.toml"),
+    ),
+    (
+        "src/fa1_cursor_worker/__init__.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/__init__.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/__main__.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/__main__.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/checkpoints.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/checkpoints.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/engine.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/engine.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/events.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/events.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/functions.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/functions.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/settings.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/settings.py"),
+    ),
+    (
+        "src/fa1_cursor_worker/tools.py",
+        include_str!("../../workers/cursor/src/fa1_cursor_worker/tools.py"),
+    ),
+];
+
 /// FA1's applications and its host of them, as this repository's `apps/` holds them
 /// (docs/specs/apps.md). They are written to `compose/apps/`, the build context of `control`.
 const APPS: &[(&str, &str)] = &[
@@ -103,8 +148,17 @@ const CONTROL_PLANE: &[&str] = &[
     "setup-files",
 ];
 
-/// The code worker's volumes, which a reset deletes.
-const CODE_VOLUMES: &[&str] = &["fa1_code-claude", "fa1_code-workspaces"];
+/// The code workers' volumes, which a reset deletes.
+const CODE_VOLUMES: &[&str] = &[
+    "fa1_code-claude",
+    "fa1_code-workspaces",
+    "fa1_cursor-home",
+    "fa1_cursor-workspaces",
+];
+
+/// The Compose profile of the Cursor worker's service. A build leaves the service out without
+/// it, so a person with no Cursor API key downloads no Cursor CLI.
+const CURSOR_PROFILE: &str = "cursor";
 
 pub struct Project {
     pub folder: Folder,
@@ -117,6 +171,12 @@ impl Project {
     /// Before the person chose a folder, the variables name the app's own: Compose reads them
     /// for every command, and no service starts then.
     fn compose(&self, what: &str, args: &[&str]) -> Action {
+        self.compose_with(what, true, args)
+    }
+
+    /// `cursor` says whether the command covers the Cursor worker's service too. Every command
+    /// does, but the build of a start without that worker.
+    fn compose_with(&self, what: &str, cursor: bool, args: &[&str]) -> Action {
         let file = self.folder.compose().join("compose.yaml");
         let chosen = self
             .folder
@@ -129,8 +189,12 @@ impl Project {
             .or_else(|| setup::owner(&self.folder.root))
             .unwrap_or((1000, 1000));
         let setup = chosen.unwrap_or_else(|| self.folder.compose().join("no-setup-folder"));
-        Action::new(what, "docker", &["compose", "-f"])
-            .arg(file.to_string_lossy())
+        let mut action =
+            Action::new(what, "docker", &["compose", "-f"]).arg(file.to_string_lossy());
+        if cursor {
+            action = action.arg("--profile").arg(CURSOR_PROFILE);
+        }
+        action
             .env("FA1_PORT", self.port.to_string())
             .env("FA1_SECRETS", self.folder.secrets().to_string_lossy())
             .env("FA1_SETUP", setup.to_string_lossy())
@@ -139,8 +203,9 @@ impl Project {
             .args_from(args)
     }
 
-    pub fn build(&self) -> Action {
-        self.compose("build the images", &["build"])
+    /// `cursor` says whether the Cursor worker runs, and so whether its image is built.
+    pub fn build(&self, cursor: bool) -> Action {
+        self.compose_with("build the images", cursor, &["build"])
     }
 
     pub fn up_control_plane(&self) -> Action {
@@ -173,6 +238,30 @@ impl Project {
         )
     }
 
+    pub fn up_cursor(&self) -> Action {
+        self.compose(
+            "start the Cursor worker",
+            &["up", "--detach", "--no-build", "cursor"],
+        )
+    }
+
+    /// The Cursor worker reads its token, its key and Robinauts' configuration as it starts.
+    pub fn up_cursor_anew(&self) -> Action {
+        self.compose(
+            "start the Cursor worker anew, with its new token or setup",
+            &["up", "--detach", "--no-build", "--force-recreate", "cursor"],
+        )
+    }
+
+    /// Without a Cursor API key, or an agent on Cursor, the Cursor worker's container goes:
+    /// Robinauts' configuration names it no more.
+    pub fn remove_cursor(&self) -> Action {
+        self.compose(
+            "remove the Cursor worker's container",
+            &["rm", "--stop", "--force", "cursor"],
+        )
+    }
+
     pub fn stop(&self) -> Action {
         self.compose("stop everything", &["stop"])
     }
@@ -191,14 +280,14 @@ impl Project {
 
     pub fn remove_code(&self) -> Action {
         self.compose(
-            "remove the code worker's container",
-            &["rm", "--stop", "--force", "code"],
+            "remove the code workers' containers",
+            &["rm", "--stop", "--force", "code", "cursor"],
         )
     }
 
     pub fn remove_code_volumes(&self) -> Action {
         let mut action = Action::new(
-            "delete the code worker's volumes",
+            "delete the code workers' volumes",
             "docker",
             &["volume", "rm", "--force"],
         );
@@ -226,19 +315,24 @@ impl Project {
         vec![
             format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/"),
             format!(
-                "write {}: {}, robinauts.toml, flows/, apps/",
+                "write {}: {}, robinauts.toml, flows/, apps/, workers/cursor/",
                 self.folder.compose().display(),
                 FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
             ),
             format!(
-                "write {}: launch, control.env, code.env, files.env, setup.env, worker_token",
+                "write {}: launch, control.env, code.env, cursor.env, files.env, setup.env, \
+                 worker_token, cursor_token",
                 self.folder.secrets().display()
             ),
             format!(
                 "mount {setup_folder} in the control plane, for the review app, and read-only in \
                  the designer's git server"
             ),
-            self.build().line(),
+            format!(
+                "{}, or with a Cursor API key and an agent on Cursor: {}",
+                self.build(false).line(),
+                self.build(true).line()
+            ),
             format!(
                 "{}, or with a new setup: {}",
                 self.up_control_plane().line(),
@@ -259,6 +353,12 @@ impl Project {
                 self.up_code_anew().line()
             ),
             format!(
+                "with a Cursor API key and an agent on Cursor, the same token step, then: {}; \
+                 otherwise: {}",
+                self.up_cursor().line(),
+                self.remove_cursor().line()
+            ),
+            format!(
                 "GET http://127.0.0.1:{}/health, until it answers ok",
                 self.port
             ),
@@ -272,6 +372,18 @@ impl Project {
         let root = self.folder.compose();
         for (name, text) in FILES {
             let path = root.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            folder::write_file(&path, text, 0o644)?;
+        }
+        // The Cursor worker's build context, written anew.
+        let cursor_worker = root.join("workers").join("cursor");
+        if cursor_worker.is_dir() {
+            fs::remove_dir_all(&cursor_worker)?;
+        }
+        for (name, text) in CURSOR_WORKER {
+            let path = cursor_worker.join(name);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -328,8 +440,30 @@ impl Project {
             }
         }
         self.folder.write_secret("code.env", &env_file(&code))?;
-        if self.folder.read_secret("worker_token").is_empty() {
-            self.folder.write_secret("worker_token", "")?;
+        // The Cursor worker's variables: the Cursor API key, then the same as the code worker's.
+        // Compose reads the file for every command, so it is written without that worker too.
+        let mut cursor = vec![
+            ("CURSOR_API_KEY", keys.cursor.as_str()),
+            ("GITHUB_TOKEN", keys.github.as_str()),
+            ("GIT_AUTHOR_NAME", setup.git_name.as_str()),
+            ("GIT_AUTHOR_EMAIL", setup.git_email.as_str()),
+            ("GIT_COMMITTER_NAME", setup.git_name.as_str()),
+            ("GIT_COMMITTER_EMAIL", setup.git_email.as_str()),
+        ];
+        for (name, key) in [
+            ("FA1_FILES_KEY", files_key.as_str()),
+            ("FA1_SETUP_KEY", setup_key.as_str()),
+        ] {
+            if setup.cursor_secrets.iter().any(|wanted| wanted == name) {
+                cursor.push((name, key));
+            }
+        }
+        let cursor = if setup.cursor { cursor } else { Vec::new() };
+        self.folder.write_secret("cursor.env", &env_file(&cursor))?;
+        for token in [control::CODE.token_file, control::CURSOR.token_file] {
+            if self.folder.read_secret(token).is_empty() {
+                self.folder.write_secret(token, "")?;
+            }
         }
         let config = root.join("robinauts.toml");
         let mut changed =
@@ -363,7 +497,8 @@ impl Project {
                 "no setup folder yet: choose one on the Welcome screen".to_string()
             })?;
         let at = std::path::Path::new(&chosen);
-        setup::read(at).map_err(|e| format!("the setup folder {chosen}: {e}"))
+        let cursor_key = !self.folder.keys().cursor.is_empty();
+        setup::read(at, cursor_key).map_err(|e| format!("the setup folder {chosen}: {e}"))
     }
 
     /// The whole start: the setup folder, the files, the images, the control plane, the token,
@@ -372,6 +507,12 @@ impl Project {
         let logs = self.folder.logs();
         say("Reading the setup folder.");
         let setup = self.read_setup()?;
+        if !setup.left_out.is_empty() {
+            say(&format!(
+                "No Cursor API key on the Keys screen: the agents on Cursor are left out ({}).",
+                setup.left_out.join(", ")
+            ));
+        }
         let setup_changed = self
             .write(keys, &setup)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
@@ -383,7 +524,7 @@ impl Project {
             );
         }
         say("Building the images. The first build takes several minutes.");
-        self.build().run(&logs, &mut *say)?;
+        self.build(setup.cursor).run(&logs, &mut *say)?;
         if setup_changed {
             self.up_control_plane_anew().run(&logs, &mut *say)?;
         } else {
@@ -392,30 +533,23 @@ impl Project {
         say("Waiting for the control plane to answer.");
         control::wait_until_up(self.port, Duration::from_secs(180))?;
         let launch = self.folder.read_secret("launch");
-        let held = control::service_tokens(self.port, &launch)?;
-        let saved_id = self.folder.read_secret("worker_token_id");
-        let saved = self.folder.read_secret("worker_token");
-        let new_token = match token_step(&saved_id, &saved, &held) {
-            TokenStep::Keep => false,
-            TokenStep::Replace { revoke } => {
-                say("Creating the code worker's token.");
-                for id in revoke {
-                    control::revoke_service_token(self.port, &launch, &id)?;
-                }
-                let (id, token) = control::create_worker_token(self.port, &launch)?;
-                self.folder
-                    .write_secret("worker_token", &token)
-                    .and_then(|_| self.folder.write_secret("worker_token_id", &id))
-                    .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
-                true
-            }
-        };
-        if new_token || setup_changed {
+        say("Checking the code worker's token.");
+        if self.worker_token(control::CODE, &launch)? || setup_changed {
             self.up_code_anew().run(&logs, &mut *say)?;
         } else {
             self.up_code().run(&logs, &mut *say)?;
         }
-        say("Waiting for the code worker to join.");
+        if setup.cursor {
+            say("Checking the Cursor worker's token.");
+            if self.worker_token(control::CURSOR, &launch)? || setup_changed {
+                self.up_cursor_anew().run(&logs, &mut *say)?;
+            } else {
+                self.up_cursor().run(&logs, &mut *say)?;
+            }
+        } else {
+            self.remove_cursor().run(&logs, &mut *say)?;
+        }
+        say("Waiting for the code workers to join.");
         for _ in 0..120 {
             if control::health(self.port) == "ok" {
                 say("Everything is up.");
@@ -424,9 +558,32 @@ impl Project {
             std::thread::sleep(Duration::from_millis(500));
         }
         Err(
-            "the code worker did not join within a minute: see its log on the Status screen"
+            "a code worker did not join within a minute: see the logs on the Status screen"
                 .to_string(),
         )
+    }
+
+    /// The token step of a start, for one worker (docs/specs/containers.md, "Starting"): keeps
+    /// the token the control plane holds, or makes a new one. The answer says whether the
+    /// token is new, which the worker reads only as it starts.
+    fn worker_token(&self, worker: control::Worker, launch: &str) -> Result<bool, String> {
+        let held = control::service_tokens(self.port, launch)?;
+        let saved_id = self.folder.read_secret(worker.token_id_file);
+        let saved = self.folder.read_secret(worker.token_file);
+        match token_step(&saved_id, &saved, &held, worker.token_name) {
+            TokenStep::Keep => Ok(false),
+            TokenStep::Replace { revoke } => {
+                for id in revoke {
+                    control::revoke_service_token(self.port, launch, &id)?;
+                }
+                let (id, token) = control::create_worker_token(self.port, launch, worker)?;
+                self.folder
+                    .write_secret(worker.token_file, &token)
+                    .and_then(|_| self.folder.write_secret(worker.token_id_file, &id))
+                    .map_err(|e| format!("the app could not write the worker's token: {e}"))?;
+                Ok(true)
+            }
+        }
     }
 
     /// What a refresh does to the setup folder before the start: a pull of the folder's upstream
@@ -454,6 +611,9 @@ impl Project {
         self.remove_code().run(&logs, &mut *say)?;
         self.remove_code_volumes().run(&logs, &mut *say)?;
         self.up_code().run(&logs, &mut *say)?;
+        if self.read_setup().is_ok_and(|setup| setup.cursor) {
+            self.up_cursor().run(&logs, &mut *say)?;
+        }
         Ok(())
     }
 }
@@ -476,7 +636,7 @@ fn collect_files(
     Ok(())
 }
 
-/// What a start does about the code worker's token.
+/// What a start does about a worker's token.
 #[derive(Debug, PartialEq)]
 pub enum TokenStep {
     /// The control plane holds the saved token: the worker keeps it.
@@ -486,15 +646,21 @@ pub enum TokenStep {
     Replace { revoke: Vec<String> },
 }
 
-/// Decides from the saved token's id and secret, and the tokens the control plane holds.
-pub fn token_step(saved_id: &str, saved: &str, held: &[control::ServiceToken]) -> TokenStep {
+/// Decides from the saved token's id and secret, and the tokens the control plane holds. `name`
+/// is the name of the worker's tokens.
+pub fn token_step(
+    saved_id: &str,
+    saved: &str,
+    held: &[control::ServiceToken],
+    name: &str,
+) -> TokenStep {
     if !saved_id.is_empty() && !saved.is_empty() && held.iter().any(|t| t.id == saved_id) {
         return TokenStep::Keep;
     }
     TokenStep::Replace {
         revoke: held
             .iter()
-            .filter(|t| t.name == control::WORKER_TOKEN_NAME)
+            .filter(|t| t.name == name)
             .map(|t| t.id.clone())
             .collect(),
     }
@@ -523,8 +689,24 @@ impl ArgsFrom for Action {
 
 #[cfg(test)]
 mod tests {
-    use super::{APPS, BUILT, TokenStep, collect_files, env_file, token_step};
-    use crate::control::{ServiceToken, WORKER_TOKEN_NAME};
+    use super::{APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, env_file, token_step};
+    use crate::control::{CODE, CURSOR, ServiceToken};
+
+    #[test]
+    fn the_app_writes_every_file_of_the_cursor_worker() {
+        let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../workers/cursor");
+        let mut found = Vec::new();
+        collect_files(&worker, &worker, &mut found).unwrap();
+        let mut found: Vec<String> = found
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+            .filter(|path| !path.split('/').any(|part| BUILT.contains(&part)))
+            .collect();
+        found.sort();
+        let mut written: Vec<String> = CURSOR_WORKER.iter().map(|(n, _)| n.to_string()).collect();
+        written.sort();
+        assert_eq!(written, found);
+    }
 
     #[test]
     fn the_app_writes_every_file_of_the_applications() {
@@ -551,7 +733,7 @@ mod tests {
 
     #[test]
     fn a_start_keeps_the_token_the_control_plane_holds_and_replaces_any_other() {
-        let worker = |id: &str| held(id, WORKER_TOKEN_NAME);
+        let worker = |id: &str| held(id, CODE.token_name);
         let other = held("o", "a-person's-script");
         let replace = |ids: &[&str]| TokenStep::Replace {
             revoke: ids.iter().map(|i| i.to_string()).collect(),
@@ -579,10 +761,17 @@ mod tests {
                 vec![worker("b"), other.clone()],
                 replace(&["b"]),
             ),
+            // The Cursor worker's token is another worker's: it stays.
+            (
+                "a",
+                "ob_svc_a",
+                vec![held("c", CURSOR.token_name)],
+                replace(&[]),
+            ),
         ];
         for (saved_id, saved, held, expected) in cases {
             assert_eq!(
-                token_step(saved_id, saved, &held),
+                token_step(saved_id, saved, &held, CODE.token_name),
                 expected,
                 "saved {saved_id:?} {saved:?}, held {held:?}"
             );

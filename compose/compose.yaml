@@ -2,14 +2,15 @@
 # The app runs this project as `fa1`, with these variables:
 #
 #   FA1_PORT        the port of the front listener, on the host's 127.0.0.1 and in `control`
-#   FA1_SECRETS     the app's secrets folder: control.env, code.env, files.env, setup.env, launch,
-#                   worker_token
+#   FA1_SECRETS     the app's secrets folder: control.env, code.env, cursor.env, files.env,
+#                   setup.env, launch, worker_token, cursor_token
 #   FA1_SETUP       the person's setup folder, on the host
 #   FA1_UID         the user that owns the setup folder, and FA1_GID, its group: the services
 #                   that reach the folder run as that user
 #
 # Every image is built here, from Robinauts at the pinned commit and from this folder. `apps/`
 # holds FA1's own image of the control plane: its applications, and its host of them.
+# `workers/cursor/` holds FA1's Cursor worker.
 
 name: fa1
 
@@ -117,6 +118,43 @@ services:
       - code-workspaces:/workspace
     restart: unless-stopped
 
+  # The Cursor worker (docs/specs/cursor-worker.md): Robinauts' worker module with FA1's engine
+  # `cursor`, which runs each turn on Cursor's CLI. It runs like `code`, on the network of
+  # `control`. The app starts it when the person gave a Cursor API key and an agent names the
+  # worker `cursor`; its profile keeps it out of every other build.
+  cursor:
+    profiles: [cursor]
+    build:
+      context: ./workers/cursor
+      additional_contexts:
+        robinauts: *robinauts
+    network_mode: service:control
+    depends_on: [control]
+    environment:
+      ROBINAUTS_CONFIG: /etc/fa1/robinauts.toml
+      ROBINAUTS_WORKER_NAME: cursor
+      ROBINAUTS_WORKER_BROKER_URL: http://127.0.0.1:8421/robinauts
+      ROBINAUTS_FLOWS_DIR: /etc/fa1/flows
+      ONEBERTH_TOKEN_FILE: /run/secrets/cursor_token
+      # The CLI runs every command and tool, as Claude Code does with bypassPermissions.
+      FA1_CURSOR_FORCE: "yes"
+      # git sends GITHUB_TOKEN to github.com when the agent's git asks for a password.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_0: "!f() { echo username=x-access-token; echo password=$$GITHUB_TOKEN; }; f"
+    # Not required: a folder written by an earlier release has no such file until its next
+    # start, and Compose reads this file for every command.
+    env_file:
+      - path: ${FA1_SECRETS:?}/cursor.env
+        required: false
+    secrets: [cursor_token]
+    volumes:
+      - ./robinauts.toml:/etc/fa1/robinauts.toml:ro
+      - ./flows:/etc/fa1/flows:ro
+      - cursor-home:/var/lib/cursor
+      - cursor-workspaces:/workspace
+    restart: unless-stopped
+
   fetch:
     <<: *mcp
     build: ./fetch
@@ -192,11 +230,15 @@ secrets:
     file: ${FA1_SECRETS:?}/launch
   worker_token:
     file: ${FA1_SECRETS:?}/worker_token
+  cursor_token:
+    file: ${FA1_SECRETS:?}/cursor_token
 
 volumes:
   control-data: {}
   code-claude: {}
   code-workspaces: {}
+  cursor-home: {}
+  cursor-workspaces: {}
   files: {}
   setup-work: {}
   todos: {}

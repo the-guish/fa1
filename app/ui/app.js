@@ -98,7 +98,7 @@ $("#key-form").addEventListener("submit", async (event) => {
   $("#key-error").textContent = "";
   try {
     await invoke("save_keys", { keys });
-    for (const field of ["claude_code", "anthropic", "github"]) form[field].value = "";
+    for (const field of ["claude_code", "anthropic", "github", "cursor"]) form[field].value = "";
     await load();
     show("run");
   } catch (error) {

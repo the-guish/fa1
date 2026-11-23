@@ -1,10 +1,10 @@
 """The person's journey through FA1 in mode 2, on the real app and a real Docker engine.
 
 From a fresh folder: the welcome screen, the checks, the keys, the start, a second start while
-everything runs, a stop and a start, Robinauts signed in in the app tab of the one window, FA1's
+everything runs, the Cursor API key and the Cursor worker it brings, a stop and a start, Robinauts signed in in the app tab of the one window, FA1's
 own application on its rail, a change the designer proposes through its tool servers, the
 person's review and approval of it, which puts it in the setup folder, a refresh that deploys
-it, a reset of the code worker, a stop, and the removal of everything. WebDriver sees each
+it, a reset of the code workers, a stop, and the removal of everything. WebDriver sees each
 webview of the window as a window handle: the admin screens, the bar, and Robinauts. The Claude Code token is not a
 real one: the code worker joins the control plane with it, and no turn runs. The Flow designer's
 turn is played without its model.
@@ -234,10 +234,11 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     ]
     click(driver, "#welcome summary")
     steps = [li.text for li in driver.find_elements(By.CSS_SELECTOR, "#plan li")]
-    assert len(steps) == 10
+    assert len(steps) == 11
     assert steps[0].startswith("read the setup folder")
     assert steps[3].startswith("mount ") and "in the control plane" in steps[3]
-    assert steps[4].endswith(f"{HOME}/compose/compose.yaml build")
+    assert f"{HOME}/compose/compose.yaml build," in steps[4]
+    assert steps[4].endswith("--profile cursor build")
 
     # Welcome: the setup folder. One inside the app's folder is refused; a new one gets the
     # starter, in a git repository.
@@ -259,7 +260,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         assert item.get_attribute("class") == "ok", item.text
 
     for name in ("fa1.toml", "models.toml", "agents/assistant.toml", "agents/claude-code.toml",
-                 "knowledge", "flows/flows.toml", "README.md", ".git"):
+                 "agents/cursor.toml", "knowledge", "flows/flows.toml", "README.md", ".git"):
         assert (SETUP / name).exists(), name
     # The starter is one commit, FA1's: a changelist starts from a commit.
     assert git(SETUP, "log", "--format=%an: %s").strip() == "FA1: The starter"
@@ -288,9 +289,18 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     )
     git(SETUP, "commit", "-q", "-a", "-m", "My name")
 
-    # Start: the setup folder, the images, the control plane, the token, the code worker.
+    # Start: the setup folder, the images, the control plane, the token, the code worker. The
+    # Keys screen holds no Cursor API key, so the starter's agent on Cursor is left out, and no
+    # Cursor worker runs.
+    before = len(log_text(driver))
     act(driver, "#start", "Everything is up.", START_SECONDS)
+    assert "the agents on Cursor are left out (cursor)" in log_text(driver)[before:]
     assert health(driver) == "ok"
+    assert docker("ps", "--all", "--quiet", "--filter", "name=fa1-cursor-1") == ""
+    assert (HOME / "secrets" / "cursor.env").read_text() == ""
+    assert "[workers.cursor]" not in (HOME / "compose" / "robinauts.toml").read_text().split(
+        "the setup folder's models and agents"
+    )[1]
     code_env = (HOME / "secrets" / "code.env").read_text()
     assert "GITHUB_TOKEN" not in code_env
     assert "GIT_AUTHOR_NAME=Ada Lovelace" in code_env
@@ -323,12 +333,40 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert (HOME / "secrets" / "worker_token").read_text() == token
     assert health(driver) == "ok"
 
+    # The Cursor API key, on the Keys screen: the next start deploys the agent on Cursor, builds
+    # the Cursor worker with Cursor's CLI, gives it a token and its key, and the worker joins.
+    # The key is no real one: the journey runs no turn on Cursor.
+    click(driver, "nav button[data-go=keys]")
+    form = driver.find_element(By.ID, "key-form")
+    form.find_element(By.NAME, "cursor").send_keys("key_not-a-real-key")
+    click(driver, "#key-form button[type=submit]")
+    WebDriverWait(driver, 10).until(lambda d: screen(d, "run").is_displayed())
+    act(driver, "#start", "Everything is up.", START_SECONDS)
+    assert health(driver) == "ok"
+    # The setup changed, so the control plane started anew and forgot the tokens: each worker
+    # has a new one.
+    assert started_at("fa1-control-1") != control_started
+    assert (HOME / "secrets" / "worker_token").read_text() != token
+    token = (HOME / "secrets" / "worker_token").read_text()
+    cursor_token = (HOME / "secrets" / "cursor_token").read_text()
+    assert cursor_token.startswith("ob_svc_") and cursor_token != token
+    cursor_env = (HOME / "secrets" / "cursor.env").read_text()
+    assert "CURSOR_API_KEY=key_not-a-real-key\n" in cursor_env
+    assert "GIT_AUTHOR_NAME=Ada Lovelace" in cursor_env and "FA1_SETUP_KEY" not in cursor_env
+    assert docker("exec", "fa1-cursor-1", "id", "-un").strip() == "robinauts"
+    version = docker("exec", "fa1-cursor-1", "cursor-agent", "--version").strip()
+    assert version and version in (HOME / "compose/workers/cursor/Dockerfile").read_text()
+    assert docker(
+        "exec", "fa1-cursor-1", "sh", "-c", 'cat "$ROBINAUTS_FLOWS_DIR/flows.toml"'
+    ) == (SETUP / "flows" / "flows.toml").read_text()
+
     # Stop, then start: the control plane forgets the worker's token when it stops. The start
     # gives the worker a new one, and the worker joins again.
     act(driver, "#stop", "stop: done.", 300)
     act(driver, "#start", "Everything is up.", START_SECONDS)
     assert health(driver) == "ok"
     assert (HOME / "secrets" / "worker_token").read_text() != token
+    assert (HOME / "secrets" / "cursor_token").read_text() != cursor_token
 
     # Robinauts, signed in, in the app tab. Its webview calls none of the app's commands.
     press(driver, "#open")
@@ -345,7 +383,12 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         "const done = arguments[arguments.length - 1];"
         "fetch('/robinauts/api/agents').then(r => r.json()).then(done, e => done(String(e)));"
     )
-    assert sorted(a["id"] for a in agents["items"]) == ["assistant", "claude-code", "flow-designer"]
+    assert sorted(a["id"] for a in agents["items"]) == [
+        "assistant",
+        "claude-code",
+        "cursor",
+        "flow-designer",
+    ]
 
     # Flows: the starter's hello flow runs on the control plane, started from Robinauts' page
     # as a person would, and its handler's result is the run's output.
@@ -432,7 +475,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     new = [e.text for e in driver.find_elements(By.CSS_SELECTOR, f"{panel} .reviews-line.new")]
     assert new == REVIEWED.splitlines(), new
     checked = driver.find_element(By.CSS_SELECTOR, ".reviews-checks").text
-    assert "4 agents" in checked, checked
+    assert "5 agents" in checked, checked
     press(driver, "[data-action=approve]")
     approved = ".reviews-header .reviews-status[data-status=approved]"
     WebDriverWait(driver, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, approved))
@@ -482,11 +525,11 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
 
     # Refresh: FA1 deploys the setup folder, and Robinauts serves the new agent. The review app
     # still sees the change in the folder.
-    assert serving_again() == ["assistant", "claude-code", "flow-designer"]
+    assert serving_again() == ["assistant", "claude-code", "cursor", "flow-designer"]
     driver.switch_to.window(main)
     act(driver, "#refresh-setup", "refresh: done.", START_SECONDS)
     assert git(SETUP, "rev-parse", "HEAD").strip() == head
-    assert serving_again() == ["assistant", "claude-code", "flow-designer", "reviewed"]
+    assert serving_again() == ["assistant", "claude-code", "cursor", "flow-designer", "reviewed"]
     closed = driver.execute_async_script(
         "const done = arguments[arguments.length - 1];"
         "fetch('/reviews/api/changelists?state=closed').then(r => r.json())"
@@ -519,6 +562,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert serving_again() == [
         "assistant",
         "claude-code",
+        "cursor",
         "flow-designer",
         "helper",
         "reviewed",
@@ -585,8 +629,9 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     WebDriverWait(driver, 10).until(lambda d: pressed("admin") == "true")
     driver.switch_to.window(main)
 
-    # Reset: the code worker's container and volumes go, and it joins again.
+    # Reset: the code workers' containers and volumes go, and they join again.
     docker("exec", "fa1-code-1", "touch", "/workspace/left-behind")
+    docker("exec", "fa1-cursor-1", "touch", "/workspace/left-behind", "/var/lib/cursor/left-behind")
     driver.execute_script("window.confirm = () => true")
     act(driver, "#reset", "reset: done.", 300)
     WebDriverWait(driver, 120, poll_frequency=3).until(lambda d: health(d) == "ok")
@@ -594,6 +639,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
         ["docker", "exec", "fa1-code-1", "ls", "/workspace"], capture_output=True, text=True
     )
     assert "left-behind" not in listed.stdout
+    assert "left-behind" not in docker("exec", "fa1-cursor-1", "ls", "/workspace", "/var/lib/cursor")
 
     # Stop: the control plane stops answering.
     act(driver, "#stop", "stop: done.", 300)
