@@ -62,7 +62,8 @@ Each VM has four drives:
 
 - An update builds a new base and a new overlay. The data drive stays.
 - A reset of the code VM deletes its overlay and its data drive.
-- The control VM reads the launch secret and the model keys from its config drive.
+- The control VM reads the launch secret, the model keys and the GitHub token from its config
+  drive.
 - The code VM reads its token, the Claude Code token and the GitHub token from its config drive.
 
 ## The build

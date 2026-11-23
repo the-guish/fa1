@@ -70,6 +70,8 @@ The app reaches the control plane the same way in every mode:
 - The person enters the keys in the app.
 - The app keeps them in its folder, readable by the person alone.
 - The model providers' keys go to the control plane.
+- The GitHub token goes to the control plane too. A flow's handler reads GitHub with it there,
+  such as the CI of a pull request ([flows.md](flows.md), "Deploying").
 - The Claude Code token and the GitHub token go to the code worker.
 - The Cursor API key and the GitHub token go to the Cursor worker.
 

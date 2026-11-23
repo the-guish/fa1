@@ -94,7 +94,7 @@ alone, and its files by every user, so the containers' users read them.
 |---|---|---|
 | `launch` | `control` | standard input, from `/run/secrets/launch` |
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
-| `control.env` | `control` | variables: the Anthropic API key, the files server's key, the key of the designer's tool servers |
+| `control.env` | `control` | variables: the Anthropic API key, the GitHub token as `GH_TOKEN`, the files server's key, the key of the designer's tool servers |
 | `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author, and the key of each keyed tool server an agent of the code worker uses |
 | `cursor_token` | `cursor` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/cursor_token` |
 | `cursor.env` | `cursor` | variables: the Cursor API key, the GitHub token, the Git author, and the key of each keyed tool server an agent of the Cursor worker uses; empty while that worker stays out |
@@ -107,7 +107,11 @@ alone, and its files by every user, so the containers' users read them.
   `claude` names that server in its `tools`. `cursor.env` follows the worker `cursor` the same
   way.
 - The worker refuses an empty `GITHUB_TOKEN`. Without a GitHub token, `code.env` leaves the line
-  out.
+  out, and `control.env` leaves `GH_TOKEN` out.
+- Robinauts hands the flows' handlers the variables of `control`, without the ones
+  `robinauts.toml` reads a key from. `GH_TOKEN` is the one key the handlers hold.
+- A handler reads GitHub with `GH_TOKEN`. One that waits for a pull request's CI needs a token
+  that reads the repository's pull requests, Actions and commit statuses.
 
 ## Starting
 
