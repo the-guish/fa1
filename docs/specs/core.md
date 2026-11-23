@@ -22,6 +22,7 @@ from the rest.
 | the app | FA1's own program: its screens, and the actions that set up and start the rest | the host |
 | the control plane | Robinauts' server in the local mode, on SQLite, and the MCP servers | depends on the mode |
 | the code worker | Robinauts' Claude Code worker, in Docker | depends on the mode |
+| the Cursor worker | FA1's worker for Cursor's CLI, in Docker; optional ([cursor-worker.md](cursor-worker.md)) | mode 2 |
 
 - The control plane holds the conversations and the model keys. It serves the interface.
 - FA1 is the host of the control plane. It composes Robinauts, neorc and FA1's own
@@ -70,12 +71,13 @@ The app reaches the control plane the same way in every mode:
 - The app keeps them in its folder, readable by the person alone.
 - The model providers' keys go to the control plane.
 - The Claude Code token and the GitHub token go to the code worker.
+- The Cursor API key and the GitHub token go to the Cursor worker.
 
 ## Builds
 
 - FA1 builds every image on the person's host, from source. FA1 publishes no image.
-- A release of FA1 pins what it builds from: one Robinauts commit, one Debian image, and the
-  version of each MCP server.
+- A release of FA1 pins what it builds from: one Robinauts commit, one Debian image, the
+  version of each MCP server, and the version of Cursor's CLI with its checksums.
 - The server and the worker are built from the same Robinauts commit. They share a wire with
   no version check.
 
@@ -88,6 +90,7 @@ The app reaches the control plane the same way in every mode:
 - The external worker: `[workers.claude]` with `external = true`.
 - The Claude Code worker's image, from `extra-workers/claude-code-worker`.
 - The to-do list and diagrams MCP servers, from `mcp/`.
+- The base worker's lock and `worker-common`, from `extra-workers/`, for the Cursor worker.
 
 FA1 uses oneberth's `compose_app`, `run` and `Shell` directly. It uses no part of oneberth's
 launcher.

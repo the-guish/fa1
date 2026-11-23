@@ -70,6 +70,7 @@ fn state() -> State {
             "anthropic": !keys.anthropic.is_empty(),
             "claude_code": !keys.claude_code.is_empty(),
             "github": !keys.github.is_empty(),
+            "cursor": !keys.cursor.is_empty(),
         }),
         setup_folder: settings.setup_folder,
         suggested_setup_folder: std::env::var_os("HOME")
@@ -102,6 +103,7 @@ fn save_keys(keys: Keys) -> Result<(), String> {
         (&mut saved.anthropic, keys.anthropic),
         (&mut saved.claude_code, keys.claude_code),
         (&mut saved.github, keys.github),
+        (&mut saved.cursor, keys.cursor),
     ] {
         if !given.trim().is_empty() {
             *field = given.trim().to_string();

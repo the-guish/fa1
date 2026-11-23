@@ -90,8 +90,31 @@ fn post(port: u16, path: &str, launch: &str, body: Value) -> Result<Value, Strin
     answer("POST", path, response)
 }
 
-/// The name of the code worker's service token.
-pub const WORKER_TOKEN_NAME: &str = "fa1-code";
+/// A worker in a container of its own (docs/specs/containers.md): the name of its service
+/// token, the name Robinauts' configuration gives it, and its two files in `secrets/`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Worker {
+    pub token_name: &'static str,
+    pub resource: &'static str,
+    pub token_file: &'static str,
+    pub token_id_file: &'static str,
+}
+
+/// The code worker: Claude Code.
+pub const CODE: Worker = Worker {
+    token_name: "fa1-code",
+    resource: "claude",
+    token_file: "worker_token",
+    token_id_file: "worker_token_id",
+};
+
+/// The Cursor worker (docs/specs/cursor-worker.md).
+pub const CURSOR: Worker = Worker {
+    token_name: "fa1-cursor",
+    resource: "cursor",
+    token_file: "cursor_token",
+    token_id_file: "cursor_token_id",
+};
 
 /// A service token the control plane holds, as it lists them: no secret.
 #[derive(Debug, Clone, PartialEq)]
@@ -124,14 +147,18 @@ pub fn revoke_service_token(port: u16, launch: &str, id: &str) -> Result<(), Str
     delete(port, &format!("/auth/services/{id}"), launch).map(|_| ())
 }
 
-/// A service token of `robinauts/worker` bound to the worker `claude`: the code worker's. The
-/// answer is its id, then its secret.
-pub fn create_worker_token(port: u16, launch: &str) -> Result<(String, String), String> {
+/// A service token of `robinauts/worker` bound to `worker`. The answer is its id, then its
+/// secret.
+pub fn create_worker_token(
+    port: u16,
+    launch: &str,
+    worker: Worker,
+) -> Result<(String, String), String> {
     let made = post(
         port,
         "/auth/services",
         launch,
-        json!({"name": WORKER_TOKEN_NAME, "role": "robinauts/worker", "resource": "claude"}),
+        json!({"name": worker.token_name, "role": "robinauts/worker", "resource": worker.resource}),
     )?;
     let field = |name: &str| {
         made.get(name)

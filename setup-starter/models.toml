@@ -1,5 +1,5 @@
-# The models the agents may use. A provider is "anthropic" (the Anthropic API key) or
-# "claude-code" (the Claude Code token).
+# The models the agents may use. A provider is "anthropic" (the Anthropic API key),
+# "claude-code" (the Claude Code token) or "cursor" (the Cursor API key).
 
 [models.sonnet]
 provider = "anthropic"
@@ -27,3 +27,26 @@ title = "Claude Sonnet 5.5 (Claude Code)"
 provider = "claude-code"
 name = "claude-haiku-5-5"
 title = "Claude Haiku 5.5 (Claude Code)"
+
+# Cursor's models, for the agents on the Cursor worker. A name is one `cursor-agent models`
+# lists for your account.
+[models.cursor-auto]
+provider = "cursor"
+name = "auto"
+title = "Auto (Cursor)"
+
+[models.cursor-composer]
+provider = "cursor"
+name = "composer-2.5"
+title = "Composer 2.5 (Cursor)"
+
+[models.cursor-grok]
+provider = "cursor"
+name = "grok-4.7-high"
+title = "Grok 4.7 High (Cursor)"
+
+# Cursor runs a model only when your plan includes it.
+[models.cursor-gemini]
+provider = "cursor"
+name = "gemini-3.1-pro"
+title = "Gemini 3.1 Pro (Cursor)"

@@ -17,7 +17,7 @@ its screens.
 | build | `docker compose build` | a build VM per role ([vms.md](vms.md)) |
 | start, stop | `docker compose up`, `docker compose stop` | `qemu-system-*` per VM, a signal to stop |
 | logs | `docker compose logs` | each VM's console, written to a file |
-| reset the code worker | remove its container and its volumes | delete its overlay and its data disk |
+| reset the code workers | remove their containers and their volumes | delete its overlay and its data disk |
 | remove everything | `docker compose down --volumes --rmi all`, then the folder | stop the VMs, then the folder |
 
 The app also speaks HTTP to the control plane on `127.0.0.1` ([core.md](core.md)).
@@ -71,10 +71,11 @@ The app writes to one folder:
 It holds:
 
 - `settings.toml`: the mode and the port.
-- `secrets/`: the launch secret, the keys and the worker's token, readable by the person alone.
+- `secrets/`: the launch secret, the keys and the workers' tokens, readable by the person alone.
 - `downloads/`: the sources and the images the build reads.
 - `compose/` in mode 2, `vms/` in mode 3. `compose/apps/` holds FA1's applications and its
-  host of them ([apps.md](apps.md)).
+  host of them ([apps.md](apps.md)). `compose/workers/cursor/` holds the Cursor worker
+  ([cursor-worker.md](cursor-worker.md)).
 - `logs/`: the actions and the parts' output.
 
 ## Screens
@@ -83,12 +84,12 @@ It holds:
    location ([setup-folder.md](setup-folder.md)).
 2. **Checks.** The prerequisites of the chosen mode, the free memory and the free disk.
    A missing prerequisite shows the exact command that installs it.
-3. **Keys.** The model providers' keys, the Claude Code token and the GitHub token. The rest of
-   the person's settings is in the setup folder.
+3. **Keys.** The model providers' keys, the Claude Code token, the GitHub token and the Cursor
+   API key, which is optional. The rest of the person's settings is in the setup folder.
 4. **Build.** The progress of each action, and its log.
 5. **Status.** Each part and its health, its log, a button that opens Robinauts in the App tab,
    and the setup folder: its location, **Refresh**, and **Change**.
-6. **Reset the code worker.**
+6. **Reset the code workers.** The Claude Code worker and the Cursor worker.
 7. **Update.** A new release of FA1 rebuilds the images.
 8. **Remove everything.** The list of what it deletes, then a confirmation.
 

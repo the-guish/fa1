@@ -16,6 +16,12 @@ api_key_env = "FA1_ANTHROPIC_KEY"
 kind = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 
+# Cursor, for the Cursor worker alone (docs/specs/cursor-worker.md): its CLI reaches Cursor with the
+# person's Cursor API key, whatever the kind named here. Robinauts wants a kind for every provider.
+[model_providers.cursor]
+kind = "openai-compatible"
+api_key_env = "CURSOR_API_KEY"
+
 # --- the tool servers: the project's MCP servers, by their service names ----------------------
 
 [tool_servers.fetch]
@@ -66,3 +72,6 @@ timeout_seconds = 120
 # The code worker runs in its own container, which the app starts with a token it created.
 [workers.claude]
 external = true
+
+# The Cursor worker runs in its own container too. The app adds [workers.cursor] below, with the
+# setup folder's agents, only while that worker runs: Robinauts refuses a worker no agent names.

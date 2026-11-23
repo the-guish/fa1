@@ -1,0 +1,20 @@
+[project]
+name = "fa1-cursor-worker"
+version = "0.1.0"
+description = "FA1's Cursor worker: Robinauts' worker module with the engine `cursor`, which runs each turn on Cursor's CLI."
+requires-python = ">=3.12"
+license = "Apache-2.0"
+# Robinauts' backend and its worker-common are in the image already, at the commit
+# compose.yaml pins (Dockerfile). This package is installed beside them, without dependencies.
+dependencies = []
+
+# The engine, by the name an agent's `engine` uses. Robinauts' worker module finds it here.
+[project.entry-points."robinauts.engines"]
+cursor = "fa1_cursor_worker.engine:init_cursor"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fa1_cursor_worker"]

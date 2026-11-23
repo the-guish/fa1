@@ -27,6 +27,10 @@ const STARTER: &[(&str, &str)] = &[
         include_str!("../../setup-starter/agents/claude-code.toml"),
     ),
     (
+        "agents/cursor.toml",
+        include_str!("../../setup-starter/agents/cursor.toml"),
+    ),
+    (
         "agents/flow-designer.toml",
         include_str!("../../setup-starter/agents/flow-designer.toml"),
     ),
@@ -73,10 +77,14 @@ const STARTER: &[(&str, &str)] = &[
 ];
 
 /// The providers a model of the setup folder may name: FA1's.
-const PROVIDERS: &[&str] = &["anthropic", "claude-code"];
+const PROVIDERS: &[&str] = &["anthropic", "claude-code", "cursor"];
 
 /// The worker of the code container, as FA1's fixed part names it.
-const CODE_WORKER: &str = "claude";
+pub const CODE_WORKER: &str = "claude";
+
+/// The worker of the Cursor container (docs/specs/cursor-worker.md). FA1 names it in Robinauts'
+/// configuration only while it runs: Robinauts refuses a worker no agent names.
+pub const CURSOR_WORKER: &str = "cursor";
 
 /// What FA1 deploys from a setup folder.
 #[derive(Debug, PartialEq)]
@@ -88,19 +96,28 @@ pub struct Setup {
     pub git_name: String,
     pub git_email: String,
     /// The variables that hold the keys the code worker needs: those of the tool servers its
-    /// agents use (`code_secrets`).
+    /// agents use (`worker_secrets`).
     pub code_secrets: Vec<String>,
+    /// Whether the Cursor worker runs: the person gave a Cursor API key, and an agent names
+    /// the worker.
+    pub cursor: bool,
+    /// The same variables, for the Cursor worker.
+    pub cursor_secrets: Vec<String>,
+    /// The agents left out of the deploy, by id: those of the Cursor worker, without a Cursor
+    /// API key.
+    pub left_out: Vec<String>,
 }
 
-/// The variables that hold the keys of the tool servers the code worker's agents use. A worker
-/// reads a tool server's key from its own environment, so an agent of the code worker reaches a
-/// keyed server only with that key in the code container. `base` is FA1's fixed part, whose
-/// tool servers name their variable in `secret_env`. `agents` are the setup folder's, by id.
-pub fn code_secrets(base: &toml::Table, agents: &toml::Table) -> Vec<String> {
+/// The variables that hold the keys of the tool servers the agents of `worker` use. A worker
+/// reads a tool server's key from its own environment, so an agent of a worker in a container
+/// reaches a keyed server only with that key in the container. `base` is FA1's fixed part,
+/// whose tool servers name their variable in `secret_env`. `agents` are the setup folder's, by
+/// id.
+pub fn worker_secrets(base: &toml::Table, agents: &toml::Table, worker: &str) -> Vec<String> {
     let servers = base.get("tool_servers").and_then(toml::Value::as_table);
     let mut found: Vec<String> = agents
         .values()
-        .filter(|agent| agent.get("worker").and_then(toml::Value::as_str) == Some(CODE_WORKER))
+        .filter(|agent| agent.get("worker").and_then(toml::Value::as_str) == Some(worker))
         .filter_map(|agent| agent.get("tools").and_then(toml::Value::as_array))
         .flatten()
         .filter_map(toml::Value::as_str)
@@ -228,8 +245,9 @@ pub fn has_changes(folder: &Path, logs: &Path, say: &mut dyn FnMut(&str)) -> Res
     Ok(!changes.trim().is_empty())
 }
 
-/// Reads and checks the setup folder. The error names the file.
-pub fn read(folder: &Path) -> Result<Setup, String> {
+/// Reads and checks the setup folder. The error names the file. `cursor_key` says whether the
+/// person gave a Cursor API key: without one, the agents of the Cursor worker are left out.
+pub fn read(folder: &Path, cursor_key: bool) -> Result<Setup, String> {
     let settings = table(folder, "fa1.toml")?;
     let git = |key: &str| -> Result<String, String> {
         match settings.get("git").and_then(|g| g.get(key)) {
@@ -293,11 +311,35 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         return Err("agents/: no agent".to_string());
     }
 
+    let on_cursor: Vec<String> = agents
+        .iter()
+        .filter(|(_, agent)| {
+            agent.get("worker").and_then(toml::Value::as_str) == Some(CURSOR_WORKER)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let cursor = cursor_key && !on_cursor.is_empty();
+    let left_out = if cursor_key { Vec::new() } else { on_cursor };
+    for id in &left_out {
+        agents.remove(id);
+    }
+    if agents.is_empty() {
+        return Err("agents/: no agent runs without the Cursor API key".to_string());
+    }
+
     let base: toml::Table = toml::from_str(BASE).map_err(|e| format!("FA1's fixed part: {e}"))?;
-    let code_secrets = code_secrets(&base, &agents);
+    let code_secrets = worker_secrets(&base, &agents, CODE_WORKER);
+    let cursor_secrets = worker_secrets(&base, &agents, CURSOR_WORKER);
     let mut added = toml::Table::new();
     added.insert("models".to_string(), models.into());
     added.insert("agents".to_string(), agents.into());
+    if cursor {
+        let mut worker = toml::Table::new();
+        worker.insert("external".to_string(), true.into());
+        let mut workers = toml::Table::new();
+        workers.insert(CURSOR_WORKER.to_string(), worker.into());
+        added.insert("workers".to_string(), workers.into());
+    }
     let robinauts_toml = format!(
         "{BASE}\n# --- the setup folder's models and agents ---------------------------------------------\n\n{}",
         toml::to_string(&added).map_err(|e| e.to_string())?
@@ -313,6 +355,9 @@ pub fn read(folder: &Path) -> Result<Setup, String> {
         git_name,
         git_email,
         code_secrets,
+        cursor,
+        cursor_secrets,
+        left_out,
     })
 }
 
@@ -464,7 +509,7 @@ mod tests {
     #[test]
     fn the_starter_deploys_its_agents_and_models() {
         let at = folder("starter");
-        let setup = read(&at).unwrap();
+        let setup = read(&at, false).unwrap();
         for wanted in [
             "[workers.claude]",
             "[models.cc-haiku]",
@@ -490,6 +535,16 @@ mod tests {
                 "{id}"
             );
         }
+        // Without a Cursor API key, the starter's agent on Cursor is left out, and Robinauts'
+        // configuration names no Cursor worker.
+        assert!(!setup.cursor);
+        assert_eq!(setup.left_out, ["cursor"]);
+        assert!(toml["agents"].get("cursor").is_none());
+        assert!(toml["workers"].get("cursor").is_none());
+        assert_eq!(
+            toml["models"]["cursor-auto"]["provider"].as_str(),
+            Some("cursor")
+        );
         assert_eq!(setup.git_name, "");
         let flows = String::from_utf8(
             setup
@@ -516,6 +571,43 @@ mod tests {
         ] {
             assert!(paths.contains(&wanted.to_string()), "{wanted}: {paths:?}");
         }
+        let _ = fs::remove_dir_all(at);
+    }
+
+    #[test]
+    fn the_cursor_worker_runs_with_a_key_and_an_agent() {
+        // With the key, the starter's agent is deployed, and its worker is named.
+        let at = folder("cursor");
+        let setup = read(&at, true).unwrap();
+        assert!(setup.cursor && setup.left_out.is_empty());
+        let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
+        assert_eq!(toml["agents"]["cursor"]["engine"].as_str(), Some("cursor"));
+        assert_eq!(toml["workers"]["cursor"]["external"].as_bool(), Some(true));
+        assert_eq!(toml["workers"]["claude"]["external"].as_bool(), Some(true));
+        assert_eq!(
+            toml["model_providers"]["cursor"]["api_key_env"].as_str(),
+            Some("CURSOR_API_KEY")
+        );
+        assert!(setup.cursor_secrets.is_empty());
+        // An agent of the Cursor worker that uses a keyed tool server gives the worker its key.
+        fs::write(
+            at.join("agents/cursor.toml"),
+            "engine = \"cursor\"\nworker = \"cursor\"\nmodels = [\"cursor-auto\"]\ntools = [\"files\"]\n",
+        )
+        .unwrap();
+        assert_eq!(read(&at, true).unwrap().cursor_secrets, ["FA1_FILES_KEY"]);
+        // With the key and no agent on Cursor, the worker stays out.
+        fs::remove_file(at.join("agents/cursor.toml")).unwrap();
+        let setup = read(&at, true).unwrap();
+        let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
+        assert!(!setup.cursor && toml["workers"].get("cursor").is_none());
+        // A setup folder whose agents are all on Cursor deploys none without the key.
+        for agent in ["assistant", "claude-code", "flow-designer"] {
+            fs::remove_file(at.join(format!("agents/{agent}.toml"))).unwrap();
+        }
+        fs::write(at.join("agents/only.toml"), "worker = \"cursor\"\n").unwrap();
+        let error = read(&at, false).unwrap_err();
+        assert!(error.contains("without the Cursor API key"), "{error}");
         let _ = fs::remove_dir_all(at);
     }
 
@@ -548,7 +640,11 @@ mod tests {
         ];
         for (agents, expected) in cases {
             let agents: toml::Table = toml::from_str(agents).unwrap();
-            assert_eq!(super::code_secrets(&base, &agents), *expected, "{agents:?}");
+            assert_eq!(
+                super::worker_secrets(&base, &agents, super::CODE_WORKER),
+                *expected,
+                "{agents:?}"
+            );
         }
     }
 
@@ -579,7 +675,7 @@ mod tests {
         for (number, (file, text, words)) in cases.iter().enumerate() {
             let at = folder(&format!("bad{number}"));
             fs::write(at.join(file), text).unwrap();
-            let error = read(&at).expect_err(file);
+            let error = read(&at, true).expect_err(file);
             assert!(error.contains(words), "{file}: {error}");
             let _ = fs::remove_dir_all(at);
         }

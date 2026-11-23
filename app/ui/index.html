@@ -80,6 +80,10 @@
           <input type="password" name="github" autocomplete="off" placeholder="github_pat_...">
           <small data-given="github"></small>
         </label>
+        <label>Cursor API key <em>optional, for the agents on Cursor</em>
+          <input type="password" name="cursor" autocomplete="off" placeholder="from the Cursor dashboard">
+          <small data-given="cursor"></small>
+        </label>
         <p id="key-error" class="error" role="alert"></p>
         <button class="primary" type="submit">Save and continue</button>
       </form>
@@ -104,11 +108,11 @@
         <button data-go="welcome">Change</button>
       </div>
       <p class="hint">A change you approve under Reviews goes into the folder at once. Refresh pulls
-        the folder, then deploys it: the control plane and the code worker start anew when it
+        the folder, then deploys it: the control plane and the code workers start anew when it
         changed, and a turn that runs then ends.</p>
       <h3>Reset and removal</h3>
       <div class="row">
-        <button id="reset">Reset the code worker</button>
+        <button id="reset">Reset the code workers</button>
         <button class="danger" id="remove">Remove everything</button>
       </div>
       <p id="removed" hidden>FA1 removed its containers, volumes, images and folder. Delete the unpacked

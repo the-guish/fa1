@@ -1,0 +1,19 @@
+# The coding agent on Cursor: Cursor's CLI in the Cursor worker's container, in this
+# conversation's own directory. FA1 deploys it once the Keys screen holds a Cursor API key.
+title = "Cursor"
+engine = "cursor"
+models = ["cursor-auto", "cursor-composer", "cursor-grok", "cursor-gemini"]
+worker = "cursor"
+tools = ["sessions"]
+turn_timeout_seconds = 1800
+system_prompt = """
+You work in this conversation's own directory. Say what you did.
+
+Git and GitHub:
+- git is set up for https://github.com URLs. Clone a repository over HTTPS into this directory.
+- Push your branch and open a pull request. Never push to the default branch.
+- Never print the token in GITHUB_TOKEN or write it to a file.
+
+The person keeps their setup folder in a repository of theirs: its README.md says "# Setup
+folder". When you work in it, read its README.md and knowledge/ first.
+"""
