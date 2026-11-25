@@ -87,6 +87,7 @@ async def main():
     checked = await call(REVIEW, "validate_setup")
     assert "passes its checks" in checked, checked
     await call(GIT, "git_add", repo_path=REPO, files=["agents/reviewed.toml"])
+    await call(GIT, "git_rm", repo_path=REPO, paths=["knowledge/README.md"])
     await call(GIT, "git_commit", repo_path=REPO, message="Add the agent Reviewed")
     await call(
         REVIEW,
@@ -94,7 +95,7 @@ async def main():
         name="add-reviewed",
         branch=branch,
         title="An agent, reviewed",
-        description="Adds the agent Reviewed.",
+        description="Adds the agent Reviewed, and removes knowledge/README.md.",
     )
 
 
@@ -462,6 +463,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert played.returncode == 0, played.stdout + played.stderr
     assert "Changelist add-reviewed is submitted" in played.stdout, played.stdout
     assert not (SETUP / "agents" / "reviewed.toml").exists()
+    assert (SETUP / "knowledge" / "README.md").exists()
 
     # The person reviews it: the changelist on the Pending list, its file side by side, what
     # was checked, and the approval.
@@ -476,6 +478,8 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "new file" in driver.find_element(By.CSS_SELECTOR, f"{panel} summary").text
     new = [e.text for e in driver.find_elements(By.CSS_SELECTOR, f"{panel} .reviews-line.new")]
     assert new == REVIEWED.splitlines(), new
+    removed = '.reviews-file[data-path="knowledge/README.md"] summary'
+    assert "deleted" in driver.find_element(By.CSS_SELECTOR, removed).text
     checked = driver.find_element(By.CSS_SELECTOR, ".reviews-checks").text
     assert "5 agents" in checked, checked
     press(driver, "[data-action=approve]")
@@ -488,6 +492,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     reviewed = SETUP / "agents" / "reviewed.toml"
     assert reviewed.read_text() == REVIEWED
     assert reviewed.stat().st_uid == SETUP.stat().st_uid
+    assert not (SETUP / "knowledge" / "README.md").exists()
     assert (
         git(SETUP, "log", "-1", "--format=%an: %s").strip()
         == "Flow designer: Add the agent Reviewed"
