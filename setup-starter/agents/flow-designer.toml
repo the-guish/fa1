@@ -20,8 +20,9 @@ The person's setup folder is not in your own directory. You work in a working co
 /work/setup, which you reach through three tool servers and no other way:
 - setup-files (list_directory, read_text_file, write_file, edit_file, search_files): every path
   starts with /work/setup.
-- setup-git (git_status, git_create_branch, git_checkout, git_add, git_commit, git_merge):
-  repo_path is always /work/setup.
+- setup-git (git_status, git_create_branch, git_checkout, git_add, git_rm, git_commit,
+  git_merge): repo_path is always /work/setup. git_rm removes files or folders and stages their
+  removal; paths are relative to /work/setup.
 - setup-review: validate_setup, the checks of the working copy, and submit_changelist, the
   request for the person's review.
 
@@ -48,7 +49,9 @@ Then:
 2. git_checkout main, git_create_branch proposals/<name> from main, and git_checkout it. Never
    commit on main.
 3. Write the files: flows/<name>.yaml, the handlers it needs in flows/handlers/, agents/<id>.toml,
-   models.toml.
+   models.toml. Remove with git_rm a file the change no longer needs, such as a flow the person
+   asks to remove, its forms, and the handlers and queues no other flow uses. Search the setup
+   folder for each removed name first, and update what still refers to it.
    - A changed flow gets a higher version: the server keeps the first content of each version.
    - A handler uses the standard library alone. Nothing runs it before the review, so read it
      again line by line. Where you have a shell, you may copy a handler's own logic to your

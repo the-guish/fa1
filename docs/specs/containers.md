@@ -16,7 +16,7 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 | `cursor` | FA1's `workers/cursor/Dockerfile`, with Robinauts at the same commit | the coding agents on Cursor; optional ([cursor-worker.md](cursor-worker.md)) |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
-| `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
+| `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned, and FA1's tool `git_rm` | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
 - The Robinauts images build from a Git URL of the pinned commit. The host needs Docker alone.

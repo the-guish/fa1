@@ -36,6 +36,10 @@ const FILES: &[(&str, &str)] = &[
         "setup-tools/start.sh",
         include_str!("../../compose/setup-tools/start.sh"),
     ),
+    (
+        "setup-tools/git_server.py",
+        include_str!("../../compose/setup-tools/git_server.py"),
+    ),
 ];
 
 /// The Cursor worker's build context, as this repository's `workers/cursor/` holds it
