@@ -43,7 +43,12 @@ behind supergateway ([flows.md](flows.md), "Authoring").
 | service | server | the designer does |
 |---|---|---|
 | `setup-files` | `@modelcontextprotocol/server-filesystem`, on `/work` | reads and writes files |
-| `setup-git` | `mcp-server-git`, on `/work/setup` | makes a branch, stages, commits, merges |
+| `setup-git` | `mcp-server-git`, on `/work/setup`, with FA1's `git_rm` | makes a branch, stages, removes files, commits, merges |
+
+- Neither reference server removes a file. FA1 adds the tool `git_rm` to the git server
+  (`compose/setup-tools/git_server.py`).
+- `git_rm` removes files and folders of the working copy, and stages their removal. A removal
+  reaches the setup folder as part of a changelist, like any other change.
 
 - The two services are one image, and run as the setup folder's owner, so both write the
   volume. Each runs read-only, with no capability.

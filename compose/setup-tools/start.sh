@@ -86,7 +86,7 @@ git)
     (sync_main)
     follow_main &
     echo "the working copy's git, on port 8939" >&2
-    exec supergateway --stdio "/opt/git-server/bin/mcp-server-git --repository $work" \
+    exec supergateway --stdio "/opt/git-server/bin/python -I /usr/local/lib/fa1-git-server.py --repository $work" \
         --logLevel none --outputTransport streamableHttp --host 0.0.0.0 --port 8939 --stateful
     ;;
 *)

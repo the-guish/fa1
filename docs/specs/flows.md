@@ -49,7 +49,7 @@ The Flow designer reaches the setup folder through three tool servers alone
 | tool server | gives the designer |
 |---|---|
 | `setup-files` | the files of its working copy of the setup folder, at `/work/setup` |
-| `setup-git` | git on that working copy: a branch, a commit, a merge |
+| `setup-git` | git on that working copy: a branch, a removal, a commit, a merge |
 | `setup-review` | `validate_setup`, the checks, and `submit_changelist`, the request for a review |
 
 1. The designer writes the flow on a branch, and commits.

@@ -1,6 +1,6 @@
 # The designer's two tool servers, over its working copy of the setup folder
 # (docs/specs/review-app.md, "The working copy"): the reference MCP filesystem server and the
-# reference MCP git server, each behind supergateway, which serves it over Streamable HTTP.
+# reference MCP git server with one tool of FA1's own, each behind supergateway, which serves it over Streamable HTTP.
 # Every request carries the key SUPERGATEWAY_API_KEY holds. The command names the server:
 # `files` or `git`. compose.yaml runs both as the setup folder's owner, and its service `owner`
 # gives that user the volume at /work.
@@ -20,6 +20,8 @@ RUN npm install --global --no-fund --no-audit \
     && chown node:node /work
 
 COPY start.sh /usr/local/lib/fa1-start.sh
+# The git server with FA1's tool git_rm: neither reference server removes a file.
+COPY git_server.py /usr/local/lib/fa1-git-server.py
 
 USER node
 ENV PYTHONDONTWRITEBYTECODE=1
