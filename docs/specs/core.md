@@ -74,12 +74,15 @@ The app reaches the control plane the same way in every mode:
   such as the CI of a pull request ([flows.md](flows.md), "Deploying").
 - The Claude Code token and the GitHub token go to the code worker.
 - The Cursor API key and the GitHub token go to the Cursor worker.
+- The secrets of a local MCP server go to that server's container alone ([local-mcp-servers.md](local-mcp-servers.md)).
 
 ## Builds
 
 - FA1 builds every image on the person's host, from source. FA1 publishes no image.
 - A release of FA1 pins what it builds from: one Robinauts commit, one Debian image, the
   version of each MCP server, and the version of Cursor's CLI with its checksums.
+- FA1 also builds the person's local MCP servers, from the Dockerfiles of the setup folder
+  ([local-mcp-servers.md](local-mcp-servers.md)). The person pins what those builds fetch, and approves each change in review.
 - The server and the worker are built from the same Robinauts commit. They share a wire with
   no version check.
 

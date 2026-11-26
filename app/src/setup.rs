@@ -2,10 +2,12 @@
 //! repository of their own (docs/specs/setup-folder.md). FA1 reads it at each start and refresh,
 //! and makes Robinauts' configuration and the flows' folder from it.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::actions::Action;
+use crate::local_servers::{self, LocalServer};
 
 /// FA1's fixed part of Robinauts' configuration: the providers, the tool servers, the workers.
 const BASE: &str = include_str!("../../compose/robinauts.base.toml");
@@ -74,7 +76,22 @@ const STARTER: &[(&str, &str)] = &[
         "flows/handlers/robinauts_tasks.py",
         include_str!("../../setup-starter/flows/handlers/robinauts_tasks.py"),
     ),
+    (
+        "local-mcp-servers/dates/mcp.toml",
+        include_str!("../../setup-starter/local-mcp-servers/dates/mcp.toml"),
+    ),
+    (
+        "local-mcp-servers/dates/Dockerfile",
+        include_str!("../../setup-starter/local-mcp-servers/dates/Dockerfile"),
+    ),
+    (
+        "local-mcp-servers/dates/server.py",
+        include_str!("../../setup-starter/local-mcp-servers/dates/server.py"),
+    ),
 ];
+
+/// The tools of Robinauts that are no tool server: a local server takes none of their ids.
+const ROBINAUTS_TOOLS: &[&str] = &["sessions"];
 
 /// The providers a model of the setup folder may name: FA1's.
 const PROVIDERS: &[&str] = &["anthropic", "claude-code", "cursor"];
@@ -106,7 +123,16 @@ pub struct Setup {
     /// The agents left out of the deploy, by id: those of the Cursor worker, without a Cursor
     /// API key.
     pub left_out: Vec<String>,
+    /// The local MCP servers deployed (docs/specs/local-mcp-servers.md).
+    pub local_servers: Vec<LocalServer>,
+    /// The local servers left out, each with the keys the person has not given yet.
+    pub missing_keys: Vec<(String, Vec<String>)>,
+    /// The agents left out because they name a server left out.
+    pub left_out_for_keys: Vec<String>,
 }
+
+/// What the person gave on the Keys screen for the local servers: by server, by variable.
+pub type ServerKeys = BTreeMap<String, BTreeMap<String, String>>;
 
 /// The variables that hold the keys of the tool servers the agents of `worker` use. A worker
 /// reads a tool server's key from its own environment, so an agent of a worker in a container
@@ -247,7 +273,7 @@ pub fn has_changes(folder: &Path, logs: &Path, say: &mut dyn FnMut(&str)) -> Res
 
 /// Reads and checks the setup folder. The error names the file. `cursor_key` says whether the
 /// person gave a Cursor API key: without one, the agents of the Cursor worker are left out.
-pub fn read(folder: &Path, cursor_key: bool) -> Result<Setup, String> {
+pub fn read(folder: &Path, cursor_key: bool, server_keys: &ServerKeys) -> Result<Setup, String> {
     let settings = table(folder, "fa1.toml")?;
     let git = |key: &str| -> Result<String, String> {
         match settings.get("git").and_then(|g| g.get(key)) {
@@ -328,11 +354,66 @@ pub fn read(folder: &Path, cursor_key: bool) -> Result<Setup, String> {
     }
 
     let base: toml::Table = toml::from_str(BASE).map_err(|e| format!("FA1's fixed part: {e}"))?;
-    let code_secrets = worker_secrets(&base, &agents, CODE_WORKER);
-    let cursor_secrets = worker_secrets(&base, &agents, CURSOR_WORKER);
+    let fixed_servers = base
+        .get("tool_servers")
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default();
+    let reserved: Vec<String> = fixed_servers
+        .keys()
+        .cloned()
+        .chain(ROBINAUTS_TOOLS.iter().map(|t| t.to_string()))
+        .collect();
+    // A server waits for the keys its manifest names. The agents that name it wait with it:
+    // Robinauts refuses an agent whose tool server is not configured.
+    let mut local_servers = Vec::new();
+    let mut missing_keys = Vec::new();
+    for server in local_servers::read(folder, &reserved)? {
+        let missing = local_servers::missing_keys(&server, server_keys.get(&server.id));
+        if missing.is_empty() {
+            local_servers.push(server);
+        } else {
+            missing_keys.push((server.id, missing));
+        }
+    }
+    let left_out_for_keys: Vec<String> = agents
+        .iter()
+        .filter(|(_, agent)| {
+            agent
+                .get("tools")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|tools| {
+                    tools
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .any(|tool| missing_keys.iter().any(|(id, _)| id == tool))
+                })
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &left_out_for_keys {
+        agents.remove(id);
+    }
+    if agents.is_empty() {
+        return Err("agents/: no agent runs without the keys of its local MCP servers".to_string());
+    }
+    let mut local_tables = toml::Table::new();
+    for server in &local_servers {
+        local_tables.insert(server.id.clone(), server.tool_server().into());
+    }
+    // The keys a worker needs come from every tool server: FA1's, then the local ones.
+    let mut every = base.clone();
+    let mut servers = fixed_servers;
+    servers.extend(local_tables.clone());
+    every.insert("tool_servers".to_string(), servers.into());
+    let code_secrets = worker_secrets(&every, &agents, CODE_WORKER);
+    let cursor_secrets = worker_secrets(&every, &agents, CURSOR_WORKER);
     let mut added = toml::Table::new();
     added.insert("models".to_string(), models.into());
     added.insert("agents".to_string(), agents.into());
+    if !local_tables.is_empty() {
+        added.insert("tool_servers".to_string(), local_tables.into());
+    }
     if cursor {
         let mut worker = toml::Table::new();
         worker.insert("external".to_string(), true.into());
@@ -358,6 +439,9 @@ pub fn read(folder: &Path, cursor_key: bool) -> Result<Setup, String> {
         cursor,
         cursor_secrets,
         left_out,
+        local_servers,
+        missing_keys,
+        left_out_for_keys,
     })
 }
 
@@ -509,7 +593,7 @@ mod tests {
     #[test]
     fn the_starter_deploys_its_agents_and_models() {
         let at = folder("starter");
-        let setup = read(&at, false).unwrap();
+        let setup = read(&at, false, &Default::default()).unwrap();
         for wanted in [
             "[workers.claude]",
             "[models.cc-haiku]",
@@ -524,9 +608,23 @@ mod tests {
             toml["agents"]["flow-designer"]["engine"].as_str(),
             Some("claude-code")
         );
-        // The designer runs on the code worker, which then needs the key of its tool servers,
-        // and no other.
-        assert_eq!(setup.code_secrets, ["FA1_SETUP_KEY"]);
+        // The code worker needs the key of the designer's tool servers, and the access key of
+        // the local server `dates`, which the agent Claude Code names.
+        assert_eq!(setup.code_secrets, ["FA1_MCP_DATES_KEY", "FA1_SETUP_KEY"]);
+        assert_eq!(
+            toml["tool_servers"]["dates"]["url"].as_str(),
+            Some("http://mcp-dates:8080/mcp")
+        );
+        let dates = &setup.local_servers[0];
+        assert_eq!((dates.id.as_str(), dates.port), ("dates", 8080));
+        assert_eq!(dates.env["TIMEZONE"], "UTC");
+        let files: Vec<_> = dates
+            .files
+            .iter()
+            .map(|(p, _, _)| p.display().to_string())
+            .collect();
+        assert_eq!(files, ["Dockerfile", "mcp.toml", "server.py"]);
+        assert!(setup.missing_keys.is_empty() && setup.left_out_for_keys.is_empty());
         // The designer's tools are tool servers of FA1's fixed part.
         for tool in toml["agents"]["flow-designer"]["tools"].as_array().unwrap() {
             let id = tool.as_str().unwrap();
@@ -578,7 +676,7 @@ mod tests {
     fn the_cursor_worker_runs_with_a_key_and_an_agent() {
         // With the key, the starter's agent is deployed, and its worker is named.
         let at = folder("cursor");
-        let setup = read(&at, true).unwrap();
+        let setup = read(&at, true, &Default::default()).unwrap();
         assert!(setup.cursor && setup.left_out.is_empty());
         let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
         assert_eq!(toml["agents"]["cursor"]["engine"].as_str(), Some("cursor"));
@@ -595,10 +693,13 @@ mod tests {
             "engine = \"cursor\"\nworker = \"cursor\"\nmodels = [\"cursor-auto\"]\ntools = [\"files\"]\n",
         )
         .unwrap();
-        assert_eq!(read(&at, true).unwrap().cursor_secrets, ["FA1_FILES_KEY"]);
+        assert_eq!(
+            read(&at, true, &Default::default()).unwrap().cursor_secrets,
+            ["FA1_FILES_KEY"]
+        );
         // With the key and no agent on Cursor, the worker stays out.
         fs::remove_file(at.join("agents/cursor.toml")).unwrap();
-        let setup = read(&at, true).unwrap();
+        let setup = read(&at, true, &Default::default()).unwrap();
         let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
         assert!(!setup.cursor && toml["workers"].get("cursor").is_none());
         // A setup folder whose agents are all on Cursor deploys none without the key.
@@ -606,7 +707,7 @@ mod tests {
             fs::remove_file(at.join(format!("agents/{agent}.toml"))).unwrap();
         }
         fs::write(at.join("agents/only.toml"), "worker = \"cursor\"\n").unwrap();
-        let error = read(&at, false).unwrap_err();
+        let error = read(&at, false, &Default::default()).unwrap_err();
         assert!(error.contains("without the Cursor API key"), "{error}");
         let _ = fs::remove_dir_all(at);
     }
@@ -649,6 +750,39 @@ mod tests {
     }
 
     #[test]
+    fn a_local_server_waits_for_its_keys_and_its_agents_wait_with_it() {
+        let at = folder("local-keys");
+        let manifest = at.join("local-mcp-servers/dates/mcp.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            format!("{text}\n[keys]\nDATES_TOKEN = \"Token\"\n"),
+        )
+        .unwrap();
+        let setup = read(&at, false, &Default::default()).unwrap();
+        assert_eq!(
+            setup.missing_keys,
+            [("dates".to_string(), vec!["DATES_TOKEN".to_string()])]
+        );
+        assert_eq!(setup.left_out_for_keys, ["assistant", "claude-code"]);
+        assert!(setup.local_servers.is_empty());
+        let toml: toml::Table = toml::from_str(&setup.robinauts_toml).unwrap();
+        assert!(toml["tool_servers"].get("dates").is_none());
+        assert!(toml["agents"].get("assistant").is_none());
+        assert!(toml["agents"].get("flow-designer").is_some());
+        // With the key, the server and its agents are deployed.
+        let given = [(
+            "dates".to_string(),
+            [("DATES_TOKEN".to_string(), "t".to_string())].into(),
+        )]
+        .into();
+        let setup = read(&at, false, &given).unwrap();
+        assert!(setup.missing_keys.is_empty() && setup.left_out_for_keys.is_empty());
+        assert_eq!(setup.local_servers.len(), 1);
+        let _ = fs::remove_dir_all(at);
+    }
+
+    #[test]
     fn a_problem_names_its_file() {
         // (file, text) -> words the error holds
         let cases = [
@@ -671,11 +805,42 @@ mod tests {
                 "models = [\"gpt\"]",
                 "agents/x.toml models: gpt is not in models.toml",
             ),
+            (
+                "local-mcp-servers/dates/mcp.toml",
+                "port = 0",
+                "local-mcp-servers/dates/mcp.toml: port",
+            ),
+            (
+                "local-mcp-servers/files/mcp.toml",
+                "port = 80",
+                "local-mcp-servers/files: files is the id of a tool",
+            ),
+            (
+                "local-mcp-servers/sessions/mcp.toml",
+                "port = 80",
+                "local-mcp-servers/sessions: sessions is the id of a tool",
+            ),
+            (
+                "local-mcp-servers/Bad/mcp.toml",
+                "port = 80",
+                "local-mcp-servers/Bad: a server's folder name",
+            ),
+            (
+                "local-mcp-servers/nodocker/mcp.toml",
+                "port = 80",
+                "local-mcp-servers/nodocker: no Dockerfile",
+            ),
         ];
         for (number, (file, text, words)) in cases.iter().enumerate() {
             let at = folder(&format!("bad{number}"));
-            fs::write(at.join(file), text).unwrap();
-            let error = read(&at, true).expect_err(file);
+            let path = at.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            // A new server's folder gets a Dockerfile, but for the case that checks it.
+            if file.starts_with("local-mcp-servers/") && !file.contains("nodocker") {
+                fs::write(path.parent().unwrap().join("Dockerfile"), "FROM scratch\n").unwrap();
+            }
+            fs::write(path, text).unwrap();
+            let error = read(&at, true, &Default::default()).expect_err(file);
             assert!(error.contains(words), "{file}: {error}");
             let _ = fs::remove_dir_all(at);
         }

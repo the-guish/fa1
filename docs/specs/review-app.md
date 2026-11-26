@@ -61,7 +61,10 @@ behind supergateway ([flows.md](flows.md), "Authoring").
 - The git server brings the working copy's `main` to the setup folder's commit as it starts.
   Work left on `main` then moves to a branch `kept/<time>`.
 - The git server looks at the setup folder's commit every two seconds while it runs. A new
-  commit fast-forwards `main`, and nothing else.
+  commit moves `main` to it, as at the start, and nothing else.
+- The person may rewrite the setup folder's history, with a rebase or a force push. `main` then
+  follows to the new commit. A branch of the designer that started from the old `main` is
+  refused at its next submit, and the designer makes it again from `main`.
 - The designer's branches and its files not yet committed stay as they are.
 - The designer's commits are by `Flow designer`. The setup folder's history then shows the
   changes the designer wrote.
@@ -128,6 +131,7 @@ The checks read the setup folder's files, and run none of them.
 | each step is on the queue `default`, and names a handler that a module of `handlers/` has; or on an external queue of `queues.toml`, which a person answers | FA1 |
 | a step that fixes `agent` or `model` in `fixed_params` names an agent of `agents/`, and a model that agent has | FA1 |
 | each handler module is Python, and imports the standard library and its neighbours alone | FA1 |
+| each local MCP server has a manifest with FA1's layout, and an id that no other tool takes ([local-mcp-servers.md](local-mcp-servers.md)) | FA1 |
 | a changed flow has a higher version than the flow that runs | FA1 |
 
 - The checks run in a process of their own, with no key and a time limit.
@@ -188,6 +192,7 @@ setup folder ([setup-folder.md](setup-folder.md), "Deploying it").
   Each file has a panel of its own, with the old and the new version side by side, as in
   GitHub's review of a pull request. Each file's panel collapses.
 - A file under `flows/handlers/` carries a mark: its code runs in the control plane.
+- A file under `local-mcp-servers/` carries a mark: its code runs in a container.
 - **Approve** and **Reject** close a submitted changelist. An approved one says whether the
   setup folder still holds it, and names Refresh.
 - **Back** returns to the list.

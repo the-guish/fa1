@@ -17,6 +17,7 @@ enters the keys, and continues where they were.
     agents/<id>.toml         one agent each: title, engine, models, tools, instructions
     knowledge/               the knowledge base: Markdown the agents read
     flows/                   the flows, in Robinauts' format, and their handlers (flows.md)
+    local-mcp-servers/<id>/  the person's own tool servers (local-mcp-servers.md)
     README.md                what the folder is, for the person and for the agents
 ```
 
@@ -55,8 +56,8 @@ You review the pull request you are given. Say "ready" or "not ready", and why.
 - A model's provider is one FA1 names: `anthropic` (the API key), `claude-code` (the Claude
   Code token) or `cursor` (the Cursor API key).
 - An agent's tools are the tool servers FA1 runs: `fetch`, `browser`, `files`, `todo`,
-  `diagrams`, the designer's `setup-files`, `setup-git` and `setup-review`, and Robinauts' own
-  `sessions`.
+  `diagrams`, the designer's `setup-files`, `setup-git` and `setup-review`, Robinauts' own
+  `sessions`, and the setup folder's local MCP servers ([local-mcp-servers.md](local-mcp-servers.md)).
 - An agent's engine and worker are the person's to choose. The app gives a keyed tool server's
   key to the worker of each agent that names the server ([containers.md](containers.md),
   "Secrets").
@@ -76,7 +77,8 @@ them in their clone of the setup folder (below). An agent's instructions may poi
 - An empty or new folder gets the starter, `setup-starter/` in this repository: FA1's default
   models (Haiku, Sonnet and Opus, and four on Cursor), the agents Assistant, Claude Code,
   Cursor and Flow designer, a
-  knowledge page on flows, Robinauts' example flow and handlers, and a README. FA1 runs
+  knowledge page on flows, Robinauts' example flow and handlers, the local MCP server `dates`,
+  and a README. FA1 runs
   `git init` in it when it is not a repository.
 - FA1 commits the starter it writes, as FA1. A changelist starts from a commit
   ([review-app.md](review-app.md), "Main").
@@ -100,7 +102,8 @@ FA1 reads the setup folder at each start and at each refresh:
 `control` mounts the folder itself, for the review app ([review-app.md](review-app.md)). The
 review app and the designer's working copy take the folder's commit as `main`.
 
-The folder's `flows/` is deployed with the flows ([flows.md](flows.md)).
+The folder's `flows/` is deployed with the flows ([flows.md](flows.md)). Its
+`local-mcp-servers/` is built and started with the control plane ([local-mcp-servers.md](local-mcp-servers.md)).
 
 **Refresh** is a button on the Status screen: it pulls the setup folder, then deploys it.
 

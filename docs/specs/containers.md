@@ -16,6 +16,7 @@ The app runs one Compose project, `fa1`, from `compose/` in its folder. The file
 | `cursor` | FA1's `workers/cursor/Dockerfile`, with Robinauts at the same commit | the coding agents on Cursor; optional ([cursor-worker.md](cursor-worker.md)) |
 | `fetch`, `browser`, `files` | FA1's Dockerfiles, and Playwright MCP's image, versions pinned | MCP servers for the web and a folder |
 | `todo`, `diagrams` | FA1's Dockerfiles, from Robinauts' `mcp/` | MCP servers with views in the side panel |
+| `mcp-<id>` | the Dockerfile of a local MCP server of the setup folder | the person's own tool servers ([local-mcp-servers.md](local-mcp-servers.md)) |
 | `setup-files`, `setup-git` | FA1's `setup-tools/Dockerfile`: the reference filesystem and git servers, versions pinned, and FA1's tool `git_rm` | MCP servers for the designer's working copy of the setup folder ([review-app.md](review-app.md)) |
 
 - Every image is built on the host by `docker compose build`. Compose builds through Bake.
@@ -94,12 +95,13 @@ alone, and its files by every user, so the containers' users read them.
 |---|---|---|
 | `launch` | `control` | standard input, from `/run/secrets/launch` |
 | `worker_token` | `code` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/worker_token` |
-| `control.env` | `control` | variables: the Anthropic API key, the GitHub token as `GH_TOKEN`, the files server's key, the key of the designer's tool servers |
+| `control.env` | `control` | variables: the Anthropic API key, the GitHub token as `GH_TOKEN`, the files server's key, the key of the designer's tool servers, the access key of each local MCP server |
 | `code.env` | `code` | variables: the Claude Code token, the GitHub token, the Git author, and the key of each keyed tool server an agent of the code worker uses |
 | `cursor_token` | `cursor` | the file `ONEBERTH_TOKEN_FILE` names, `/run/secrets/cursor_token` |
 | `cursor.env` | `cursor` | variables: the Cursor API key, the GitHub token, the Git author, and the key of each keyed tool server an agent of the Cursor worker uses; empty while that worker stays out |
 | `files.env` | `files` | variables: the files server's key |
 | `setup.env` | `setup-files`, `setup-git` | variables: the key of the designer's tool servers |
+| `mcp-<id>.env` | `mcp-<id>` | variables: the server's access key, port and path, and its manifest's `[keys]` |
 
 - Docker shows a container's variables to `docker inspect`. Mode 2 accepts it.
 - A worker reads a tool server's key from its own environment. The app reads each agent of the

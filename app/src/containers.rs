@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::actions::Action;
 use crate::control;
 use crate::folder::{self, Folder, Keys};
+use crate::local_servers;
 use crate::setup::{self, Setup};
 
 /// The project's files, as this repository's `compose/` holds them.
@@ -195,6 +196,11 @@ impl Project {
         let setup = chosen.unwrap_or_else(|| self.folder.compose().join("no-setup-folder"));
         let mut action =
             Action::new(what, "docker", &["compose", "-f"]).arg(file.to_string_lossy());
+        // The setup folder's local MCP servers, once a start wrote their file.
+        let local = self.folder.compose().join(local_servers::COMPOSE_FILE);
+        if local.is_file() {
+            action = action.arg("-f").arg(local.to_string_lossy());
+        }
         if cursor {
             action = action.arg("--profile").arg(CURSOR_PROFILE);
         }
@@ -212,17 +218,28 @@ impl Project {
         self.compose_with("build the images", cursor, &["build"])
     }
 
-    pub fn up_control_plane(&self) -> Action {
-        let mut args = vec!["up", "--detach", "--no-build"];
+    /// `local` are the services of the setup folder's local MCP servers, which start with the
+    /// control plane. A server the setup folder no longer holds leaves an orphan container,
+    /// which goes.
+    pub fn up_control_plane(&self, local: &[String]) -> Action {
+        let mut args = vec!["up", "--detach", "--no-build", "--remove-orphans"];
         args.extend_from_slice(CONTROL_PLANE);
+        args.extend(local.iter().map(String::as_str));
         self.compose("start the control plane", &args)
     }
 
     /// The control plane reads Robinauts' configuration as it starts, so a new setup needs new
     /// containers.
-    pub fn up_control_plane_anew(&self) -> Action {
-        let mut args = vec!["up", "--detach", "--no-build", "--force-recreate"];
+    pub fn up_control_plane_anew(&self, local: &[String]) -> Action {
+        let mut args = vec![
+            "up",
+            "--detach",
+            "--no-build",
+            "--remove-orphans",
+            "--force-recreate",
+        ];
         args.extend_from_slice(CONTROL_PLANE);
+        args.extend(local.iter().map(String::as_str));
         self.compose("start the control plane anew, with the new setup", &args)
     }
 
@@ -317,15 +334,21 @@ impl Project {
             .setup_folder
             .unwrap_or_else(|| "(chosen on this screen)".to_string());
         vec![
-            format!("read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/"),
             format!(
-                "write {}: {}, robinauts.toml, flows/, apps/, workers/cursor/",
+                "read the setup folder {setup_folder}: fa1.toml, models.toml, agents/, flows/, \
+                 local-mcp-servers/"
+            ),
+            format!(
+                "write {}: {}, robinauts.toml, flows/, apps/, workers/cursor/, \
+                 local-mcp-servers/, {}",
                 self.folder.compose().display(),
-                FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
+                FILES.iter().map(|f| f.0).collect::<Vec<_>>().join(", "),
+                local_servers::COMPOSE_FILE
             ),
             format!(
                 "write {}: launch, control.env, code.env, cursor.env, files.env, setup.env, \
-                 worker_token, cursor_token",
+                 worker_token, cursor_token, and mcp-<id>.env and mcp-<id>.key per local MCP \
+                 server",
                 self.folder.secrets().display()
             ),
             format!(
@@ -338,9 +361,9 @@ impl Project {
                 self.build(true).line()
             ),
             format!(
-                "{}, or with a new setup: {}",
-                self.up_control_plane().line(),
-                self.up_control_plane_anew().line()
+                "{} mcp-<id>..., or with a new setup: {} mcp-<id>...",
+                self.up_control_plane(&[]).line(),
+                self.up_control_plane_anew(&[]).line()
             ),
             format!(
                 "GET http://127.0.0.1:{}/auth/session, until it answers",
@@ -409,8 +432,54 @@ impl Project {
         let files_key = self.folder.secret_or("files_key", folder::random_secret)?;
         // One key for the designer's three tool servers.
         let setup_key = self.folder.secret_or("setup_key", folder::random_secret)?;
+        // The keyed tool servers, by the variable that holds each key: FA1's, then the local
+        // MCP servers' access keys (docs/specs/local-mcp-servers.md).
+        let mut keyed = vec![
+            ("FA1_FILES_KEY".to_string(), files_key.clone()),
+            ("FA1_SETUP_KEY".to_string(), setup_key.clone()),
+        ];
+        // The local servers' folders, written anew: a server the setup folder dropped goes.
+        let local_root = root.join(local_servers::FOLDER);
+        if local_root.is_dir() {
+            fs::remove_dir_all(&local_root)?;
+        }
+        for server in &setup.local_servers {
+            for (path, bytes, executable) in &server.files {
+                let path = local_root.join(&server.id).join(path);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                // The build copies each file with its mode: a script the image runs keeps
+                // its mark.
+                folder::write_bytes(&path, bytes, if *executable { 0o755 } else { 0o644 })?;
+            }
+            let access = self
+                .folder
+                .secret_or(&server.key_file(), folder::random_secret)?;
+            let given = keys.servers.get(&server.id).cloned().unwrap_or_default();
+            let env = local_servers::container_env(server, &access, &given);
+            let pairs: Vec<(&str, &str)> =
+                env.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            self.folder
+                .write_secret(&server.env_file(), &quoted_env_file(&pairs))?;
+            keyed.push((server.variable(), access));
+        }
+        // The variables of a server that no longer runs go, its secrets with them. Its access
+        // key stays, for the day it comes back.
+        let running: Vec<String> = setup.local_servers.iter().map(|s| s.env_file()).collect();
+        for entry in fs::read_dir(self.folder.secrets())?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("mcp-") && name.ends_with(".env") && !running.contains(&name) {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        folder::write_file(
+            &root.join(local_servers::COMPOSE_FILE),
+            &local_servers::compose_yaml(&setup.local_servers),
+            0o644,
+        )?;
         self.folder
-            .write_secret("control.env", &control_env(keys, &files_key, &setup_key))?;
+            .write_secret("control.env", &control_env(keys, &keyed))?;
         self.folder.write_secret(
             "files.env",
             &env_file(&[("SUPERGATEWAY_API_KEY", &files_key)]),
@@ -429,11 +498,8 @@ impl Project {
         ];
         // The code worker holds the key of a tool server only while an agent of its own uses
         // that server (setup::code_secrets).
-        for (name, key) in [
-            ("FA1_FILES_KEY", files_key.as_str()),
-            ("FA1_SETUP_KEY", setup_key.as_str()),
-        ] {
-            if setup.code_secrets.iter().any(|wanted| wanted == name) {
+        for (name, key) in &keyed {
+            if setup.code_secrets.contains(name) {
                 code.push((name, key));
             }
         }
@@ -448,11 +514,8 @@ impl Project {
             ("GIT_COMMITTER_NAME", setup.git_name.as_str()),
             ("GIT_COMMITTER_EMAIL", setup.git_email.as_str()),
         ];
-        for (name, key) in [
-            ("FA1_FILES_KEY", files_key.as_str()),
-            ("FA1_SETUP_KEY", setup_key.as_str()),
-        ] {
-            if setup.cursor_secrets.iter().any(|wanted| wanted == name) {
+        for (name, key) in &keyed {
+            if setup.cursor_secrets.contains(name) {
                 cursor.push((name, key));
             }
         }
@@ -496,7 +559,8 @@ impl Project {
             })?;
         let at = std::path::Path::new(&chosen);
         let cursor_key = !self.folder.keys().cursor.is_empty();
-        setup::read(at, cursor_key).map_err(|e| format!("the setup folder {chosen}: {e}"))
+        setup::read(at, cursor_key, &self.folder.keys().servers)
+            .map_err(|e| format!("the setup folder {chosen}: {e}"))
     }
 
     /// The whole start: the setup folder, the files, the images, the control plane, the token,
@@ -511,6 +575,19 @@ impl Project {
                 setup.left_out.join(", ")
             ));
         }
+        for (id, missing) in &setup.missing_keys {
+            say(&format!(
+                "The local MCP server {id} waits for its keys on the Keys screen: {}.",
+                missing.join(", ")
+            ));
+        }
+        if !setup.left_out_for_keys.is_empty() {
+            say(&format!(
+                "The agents that use it are left out until then ({}).",
+                setup.left_out_for_keys.join(", ")
+            ));
+        }
+        let local: Vec<String> = setup.local_servers.iter().map(|s| s.service()).collect();
         let setup_changed = self
             .write(keys, &setup)
             .map_err(|e| format!("the app could not write its folder: {e}"))?;
@@ -524,9 +601,9 @@ impl Project {
         say("Building the images. The first build takes several minutes.");
         self.build(setup.cursor).run(&logs, &mut *say)?;
         if setup_changed {
-            self.up_control_plane_anew().run(&logs, &mut *say)?;
+            self.up_control_plane_anew(&local).run(&logs, &mut *say)?;
         } else {
-            self.up_control_plane().run(&logs, &mut *say)?;
+            self.up_control_plane(&local).run(&logs, &mut *say)?;
         }
         say("Waiting for the control plane to answer.");
         control::wait_until_up(self.port, Duration::from_secs(180))?;
@@ -664,17 +741,18 @@ pub fn token_step(
     }
 }
 
-/// The variables of `control`: the Anthropic API key, the GitHub token, and the keys of the
-/// files server and of the designer's tool servers. The GitHub token is `GH_TOKEN` there, which
-/// Robinauts hands the flows' handlers with the rest of the server's environment: a handler
-/// reads GitHub with it (docs/specs/containers.md, "Secrets").
-fn control_env(keys: &Keys, files_key: &str, setup_key: &str) -> String {
-    env_file(&[
-        ("FA1_ANTHROPIC_KEY", &keys.anthropic),
-        ("GH_TOKEN", &keys.github),
-        ("FA1_FILES_KEY", files_key),
-        ("FA1_SETUP_KEY", setup_key),
-    ])
+/// The variables of `control`: the Anthropic API key, the GitHub token, and the key of each
+/// keyed tool server, by its variable. The GitHub token is `GH_TOKEN` there, which Robinauts
+/// hands the flows' handlers with the rest of the server's environment: a handler reads GitHub
+/// with it (docs/specs/containers.md, "Secrets"). Robinauts keeps the tool servers' keys from
+/// the handlers, since its configuration names them.
+fn control_env(keys: &Keys, keyed: &[(String, String)]) -> String {
+    let mut pairs = vec![
+        ("FA1_ANTHROPIC_KEY", keys.anthropic.as_str()),
+        ("GH_TOKEN", keys.github.as_str()),
+    ];
+    pairs.extend(keyed.iter().map(|(n, k)| (n.as_str(), k.as_str())));
+    env_file(&pairs)
 }
 
 /// `NAME=value` lines, as `docker compose` reads them, without quotes. A variable with no value
@@ -684,6 +762,22 @@ fn env_file(pairs: &[(&str, &str)]) -> String {
         .iter()
         .filter(|(_, value)| !value.trim().is_empty())
         .map(|(name, value)| format!("{name}={}\n", value.trim()))
+        .collect()
+}
+
+/// `NAME="value"` lines, each value as the person typed it. Compose reads `$` in an env file as
+/// the start of a variable, and ` #` as the start of a comment, but in a double-quoted value
+/// only where `\$`, `\"` and `\\` do not escape them.
+fn quoted_env_file(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| {
+            let escaped = value
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('$', "\\$");
+            format!("{name}=\"{escaped}\"\n")
+        })
         .collect()
 }
 
@@ -701,7 +795,8 @@ impl ArgsFrom for Action {
 #[cfg(test)]
 mod tests {
     use super::{
-        APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, control_env, env_file, token_step,
+        APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, control_env, env_file,
+        quoted_env_file, token_step,
     };
     use crate::control::{CODE, CURSOR, ServiceToken};
     use crate::folder::Keys;
@@ -793,6 +888,27 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_env_file_keeps_every_character_of_a_value() {
+        // (the value typed) -> the line Compose reads back as that value: verified with
+        // `docker compose run` and printenv, Compose 2.26.
+        let cases = [
+            ("plain", r#"K="plain""#),
+            ("pa$word", r#"K="pa\$word""#),
+            ("pa${HOME}x", r#"K="pa\${HOME}x""#),
+            ("pass #word", r#"K="pass #word""#),
+            (r#"it's "q" \ end"#, r#"K="it's \"q\" \\ end""#),
+            (r"\n", r#"K="\\n""#),
+        ];
+        for (value, line) in cases {
+            assert_eq!(
+                quoted_env_file(&[("K", value)]),
+                format!("{line}\n"),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
     fn an_env_file_leaves_out_the_variables_without_a_value() {
         let cases: &[(&[(&str, &str)], &str)] = &[
             (&[("A", "1"), ("B", "")], "A=1\n"),
@@ -832,7 +948,13 @@ mod tests {
                 ..Keys::default()
             };
             assert_eq!(
-                control_env(&keys, "f", "s"),
+                control_env(
+                    &keys,
+                    &[
+                        ("FA1_FILES_KEY".to_string(), "f".to_string()),
+                        ("FA1_SETUP_KEY".to_string(), "s".to_string())
+                    ]
+                ),
                 expected,
                 "{anthropic:?} {github:?}"
             );

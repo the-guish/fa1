@@ -10,6 +10,31 @@ function show(screen) {
   }
   if (screen === "checks") runChecks();
   if (screen === "run") refresh();
+  // The setup folder may have gained a local MCP server, and its keys, since the last look.
+  if (screen === "keys") invoke("state").then(showKeys);
+}
+
+// Which keys are saved, and a field for each key a local MCP server of the setup folder names.
+function showKeys(state) {
+  for (const small of document.querySelectorAll("[data-given]")) {
+    small.textContent = state.given[small.dataset.given] ? "Saved." : "";
+  }
+  const serverKeys = $("#server-keys");
+  serverKeys.textContent = "";
+  for (const key of state.server_keys) {
+    const label = document.createElement("label");
+    const title = document.createElement("em");
+    title.textContent = `for the local MCP server ${key.title}`;
+    const input = document.createElement("input");
+    input.type = "password";
+    input.autocomplete = "off";
+    input.name = `server:${key.server}:${key.name}`;
+    input.placeholder = key.name;
+    const given = document.createElement("small");
+    given.textContent = key.given ? "Saved." : "";
+    label.append(`${key.label} `, title, input, given);
+    serverKeys.append(label);
+  }
 }
 
 function log(line) {
@@ -53,10 +78,7 @@ async function refresh() {
 async function load() {
   const state = await invoke("state");
   $("#folder").textContent = state.folder;
-  for (const small of document.querySelectorAll("[data-given]")) {
-    small.textContent = state.given[small.dataset.given] ? "Saved." : "";
-  }
-  const form = $("#key-form");
+  showKeys(state);
   $("#setup-folder").value = state.setup_folder || "";
   $("#setup-folder").placeholder = state.suggested_setup_folder;
   $("#setup-path").textContent = state.setup_folder || "none yet";
@@ -94,11 +116,19 @@ $("#welcome-next").addEventListener("click", async () => {
 $("#key-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
-  const keys = Object.fromEntries(new FormData(form));
+  const keys = { servers: {} };
+  for (const [name, value] of new FormData(form)) {
+    const [kind, server, variable] = name.split(":");
+    if (kind === "server") {
+      keys.servers[server] = { ...keys.servers[server], [variable]: value };
+    } else {
+      keys[name] = value;
+    }
+  }
   $("#key-error").textContent = "";
   try {
     await invoke("save_keys", { keys });
-    for (const field of ["claude_code", "anthropic", "github", "cursor"]) form[field].value = "";
+    for (const input of form.querySelectorAll("input")) input.value = "";
     await load();
     show("run");
   } catch (error) {
