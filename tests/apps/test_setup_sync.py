@@ -10,11 +10,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 START = ROOT / "compose" / "setup-tools" / "start.sh"
 
+# git with no settings of the computer's, as on CI, where no identity is set.
+GIT_ENV = {
+    "PATH": os.environ["PATH"],
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "Ada",
+    "GIT_AUTHOR_EMAIL": "ada@example.com",
+    "GIT_COMMITTER_NAME": "Ada",
+    "GIT_COMMITTER_EMAIL": "ada@example.com",
+}
+
 
 def git(at: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(at), *args], check=True, capture_output=True, text=True
-    ).stdout.strip()
+    done = subprocess.run(
+        ["git", "-C", str(at), *args], env=GIT_ENV, capture_output=True, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.strip()
 
 
 def commit(at: Path, name: str, text: str, message: str) -> str:
@@ -33,7 +46,7 @@ class Copies:
         commit(self.setup, "a.md", "one\n", "First")
 
     def sync(self) -> subprocess.CompletedProcess[str]:
-        env = {**os.environ, "FA1_SETUP_WORK": str(self.work), "FA1_SETUP_FOLDER": str(self.setup)}
+        env = {**GIT_ENV, "FA1_SETUP_WORK": str(self.work), "FA1_SETUP_FOLDER": str(self.setup)}
         return subprocess.run(["sh", str(START), "sync"], env=env, capture_output=True, text=True)
 
     def branch(self) -> str:
