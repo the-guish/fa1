@@ -75,7 +75,8 @@ It holds:
 - `downloads/`: the sources and the images the build reads.
 - `compose/` in mode 2, `vms/` in mode 3. `compose/apps/` holds FA1's applications and its
   host of them ([apps.md](apps.md)). `compose/workers/cursor/` holds the Cursor worker
-  ([cursor-worker.md](cursor-worker.md)).
+  ([cursor-worker.md](cursor-worker.md)). `compose/local-mcp-servers/` holds the person's
+  local MCP servers ([local-mcp-servers.md](local-mcp-servers.md)).
 - `logs/`: the actions and the parts' output.
 
 ## Screens
@@ -85,7 +86,8 @@ It holds:
 2. **Checks.** The prerequisites of the chosen mode, the free memory and the free disk.
    A missing prerequisite shows the exact command that installs it.
 3. **Keys.** The model providers' keys, the Claude Code token, the GitHub token and the Cursor
-   API key, which is optional. The rest of the person's settings is in the setup folder.
+   API key, which is optional. Each local MCP server adds the keys its manifest names
+   ([local-mcp-servers.md](local-mcp-servers.md)). The rest of the person's settings is in the setup folder.
 4. **Build.** The progress of each action, and its log.
 5. **Status.** Each part and its health, its log, a button that opens Robinauts in the App tab,
    and the setup folder: its location, **Refresh**, and **Change**.

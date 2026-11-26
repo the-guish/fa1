@@ -8,6 +8,7 @@ mod checks;
 mod containers;
 mod control;
 mod folder;
+mod local_servers;
 mod setup;
 
 use std::fs;
@@ -55,6 +56,43 @@ struct State {
     /// The setup folder, once chosen; and the one the Welcome screen suggests.
     setup_folder: Option<String>,
     suggested_setup_folder: String,
+    /// The keys the setup folder's local MCP servers name, for the Keys screen.
+    server_keys: Vec<ServerKey>,
+}
+
+#[derive(Serialize)]
+struct ServerKey {
+    server: String,
+    title: String,
+    name: String,
+    label: String,
+    given: bool,
+}
+
+/// The keys each local MCP server of the setup folder names (docs/specs/local-mcp-servers.md),
+/// and whether the person gave each. A setup folder that does not read shows none: the start
+/// names its problem.
+fn server_keys(settings: &folder::Settings, keys: &Keys) -> Vec<ServerKey> {
+    let Some(chosen) = &settings.setup_folder else {
+        return Vec::new();
+    };
+    let servers = local_servers::read(std::path::Path::new(chosen), &[]).unwrap_or_default();
+    servers
+        .iter()
+        .flat_map(|server| {
+            server.keys.iter().map(|(name, label)| ServerKey {
+                server: server.id.clone(),
+                title: server.title.clone(),
+                name: name.clone(),
+                label: label.clone(),
+                given: keys
+                    .servers
+                    .get(&server.id)
+                    .and_then(|given| given.get(name))
+                    .is_some_and(|value| !value.is_empty()),
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -62,6 +100,7 @@ fn state() -> State {
     let folder = folder();
     let settings = folder.settings();
     let keys = folder.keys();
+    let server_keys = server_keys(&settings, &keys);
     State {
         folder: folder.root.display().to_string(),
         mode: settings.mode,
@@ -72,6 +111,7 @@ fn state() -> State {
             "github": !keys.github.is_empty(),
             "cursor": !keys.cursor.is_empty(),
         }),
+        server_keys,
         setup_folder: settings.setup_folder,
         suggested_setup_folder: std::env::var_os("HOME")
             .map(|home| std::path::Path::new(&home).join("fa1-setup"))
@@ -107,6 +147,17 @@ fn save_keys(keys: Keys) -> Result<(), String> {
     ] {
         if !given.trim().is_empty() {
             *field = given.trim().to_string();
+        }
+    }
+    for (server, given) in keys.servers {
+        for (name, value) in given {
+            if !value.trim().is_empty() {
+                saved
+                    .servers
+                    .entry(server.clone())
+                    .or_default()
+                    .insert(name, value.trim().to_string());
+            }
         }
     }
     folder.save_keys(&saved).map_err(|e| e.to_string())?;

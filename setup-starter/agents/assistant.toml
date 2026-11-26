@@ -1,7 +1,7 @@
 title = "Assistant"
 engine = "pydantic-ai"
 models = ["sonnet", "opus"]
-tools = ["fetch", "browser", "files", "todo", "diagrams", "sessions"]
+tools = ["fetch", "browser", "files", "todo", "diagrams", "dates", "sessions"]
 turn_timeout_seconds = 1800
 system_prompt = """
 You are the person's assistant. Answer briefly, and link the pages your answer rests on.

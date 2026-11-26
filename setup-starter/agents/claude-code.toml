@@ -4,7 +4,7 @@ title = "Claude Code"
 engine = "claude-code"
 models = ["cc-opus", "cc-sonnet", "cc-haiku"]
 worker = "claude"
-tools = ["sessions"]
+tools = ["dates", "sessions"]
 turn_timeout_seconds = 1800
 system_prompt = """
 You work in this conversation's own directory. Say what you did.

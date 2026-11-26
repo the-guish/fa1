@@ -1,0 +1,17 @@
+# A local MCP server: date arithmetic, which models do poorly (docs/specs/local-mcp-servers.md in
+# FA1). FA1 builds the Dockerfile beside this file, runs it, and gives the tool server `dates` to
+# the agents that name it in their `tools`. Copy this folder to start a server of your own.
+title = "Dates"
+port = 8080
+path = "/mcp"
+timeout_seconds = 30
+
+# Settings of the server's container.
+[env]
+TIMEZONE = "UTC"
+
+# The secrets the server needs: each variable's name, and the label of its field on FA1's Keys
+# screen. The values stay in FA1's folder. This server needs none; a Jira server would hold:
+#
+# [keys]
+# JIRA_API_TOKEN = "Jira API token"
