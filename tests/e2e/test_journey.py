@@ -121,10 +121,13 @@ add setup-files http://setup-files:8938/mcp "$FA1_SETUP_KEY"
 add setup-git http://setup-git:8939/mcp "$FA1_SETUP_KEY"
 add setup-review http://127.0.0.1:8422/mcp "$FA1_SETUP_KEY"
 add without-the-key http://setup-git:8939/mcp not-the-key
+add dates http://mcp-dates:8080/mcp "$FA1_MCP_DATES_KEY"
+add dates-without-the-key http://mcp-dates:8080/mcp not-the-key
 "$claude" mcp list
 """
 """Claude Code's own MCP client, asked for the health of the designer's three tool servers as
-the worker names them, and of one with a wrong key."""
+the worker names them, of the starter's local MCP server `dates`, and of each with a wrong
+key."""
 
 
 @pytest.fixture(scope="module")
@@ -326,6 +329,21 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert setup_key and f"FA1_SETUP_KEY={setup_key}\n" in code_env
     assert setup_key in (HOME / "secrets" / "control.env").read_text()
     assert "FA1_FILES_KEY" not in code_env
+    # The starter's local MCP server `dates` is built and runs, locked down, with its access
+    # key. The agent Claude Code names it, so the code worker holds that key too.
+    dates_key = (HOME / "secrets" / "mcp-dates.key").read_text().strip()
+    assert f"FA1_MCP_DATES_KEY={dates_key}\n" in code_env
+    assert dates_key in (HOME / "secrets" / "control.env").read_text()
+    assert f"MCP_ACCESS_KEY={dates_key}\n" in (HOME / "secrets" / "mcp-dates.env").read_text()
+    assert (HOME / "compose/local-mcp-servers/dates/server.py").read_bytes() == (
+        SETUP / "local-mcp-servers/dates/server.py"
+    ).read_bytes()
+    configured = (HOME / "compose" / "robinauts.toml").read_text()
+    assert 'url = "http://mcp-dates:8080/mcp"' in configured
+    assert docker("exec", "fa1-mcp-dates-1", "id", "-un").strip() == "nobody"
+    assert docker(
+        "inspect", "fa1-mcp-dates-1", "--format", "{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}"
+    ).strip() == "true [ALL]"
 
     # Start again, while everything runs: the control plane keeps running, and the worker keeps
     # its token.
@@ -362,6 +380,31 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert docker(
         "exec", "fa1-cursor-1", "sh", "-c", 'cat "$ROBINAUTS_FLOWS_DIR/flows.toml"'
     ) == (SETUP / "flows" / "flows.toml").read_text()
+
+    # A local MCP server that needs a secret waits for it on the Keys screen, and the agents
+    # that name it wait too. The value reaches the server's container alone.
+    manifest = SETUP / "local-mcp-servers/dates/mcp.toml"
+    manifest.write_text(manifest.read_text() + '\n[keys]\nDATES_NOTE = "A note"\n')
+    git(SETUP, "commit", "-q", "-a", "-m", "dates needs a note")
+    before = len(log_text(driver))
+    act(driver, "#start", "Everything is up.", START_SECONDS)
+    said = log_text(driver)[before:]
+    assert "The local MCP server dates waits for its keys on the Keys screen: DATES_NOTE." in said
+    assert "left out until then (assistant, claude-code)" in said, said
+    assert docker("ps", "--all", "--quiet", "--filter", "name=fa1-mcp-dates-1") == ""
+    assert "FA1_MCP_DATES_KEY" not in (HOME / "secrets" / "code.env").read_text()
+    click(driver, "nav button[data-go=keys]")
+    form = driver.find_element(By.ID, "key-form")
+    form.find_element(By.NAME, "server:dates:DATES_NOTE").send_keys("a-note")
+    click(driver, "#key-form button[type=submit]")
+    WebDriverWait(driver, 10).until(lambda d: screen(d, "run").is_displayed())
+    act(driver, "#start", "Everything is up.", START_SECONDS)
+    assert docker("exec", "fa1-mcp-dates-1", "printenv", "DATES_NOTE").strip() == "a-note"
+    assert "a-note" not in (HOME / "secrets" / "code.env").read_text()
+    assert "a-note" not in (HOME / "secrets" / "control.env").read_text()
+    assert "FA1_MCP_DATES_KEY" in (HOME / "secrets" / "code.env").read_text()
+    token = (HOME / "secrets" / "worker_token").read_text()
+    cursor_token = (HOME / "secrets" / "cursor_token").read_text()
 
     # Stop, then start: the control plane forgets the worker's token when it stops. The start
     # gives the worker a new one, and the worker joins again.
@@ -443,13 +486,15 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     reached = {
         line.split(":")[0]: "Connected" in line
         for line in listed.stdout.splitlines()
-        if line.startswith(("setup-", "without-the-key"))
+        if line.startswith(("setup-", "without-the-key", "dates"))
     }
     assert reached == {
         "setup-files": True,
         "setup-git": True,
         "setup-review": True,
         "without-the-key": False,
+        "dates": True,
+        "dates-without-the-key": False,
     }, listed.stdout
 
     # The Flow designer proposes a change: a branch of its working copy, a file, the checks, a

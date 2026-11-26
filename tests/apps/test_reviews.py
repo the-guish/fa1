@@ -267,6 +267,46 @@ def asked(kind: str | None, default: str | None = None) -> dict[str, str | None]
     return files
 
 
+def server(id: str, manifest: str) -> dict[str, str | None]:
+    """The files of a local MCP server."""
+    return {
+        f"local-mcp-servers/{id}/mcp.toml": manifest,
+        f"local-mcp-servers/{id}/Dockerfile": "FROM scratch\n",
+    }
+
+
+@pytest.mark.parametrize(
+    ("manifest", "word"),
+    [
+        ("port = 8080\n", None),
+        ('port = 1\npath = "/"\ntimeout_seconds = 2.5\n[env]\nTZ = "UTC"\n[keys]\nT = "t"\n', None),
+        ("", "port: the port"),
+        ("port = 70000\n", "port: a number"),
+        ("port = true\n", "port: a number"),
+        ('port = 80\npath = "mcp"\n', "path: a path"),
+        ("port = 80\ntimeout_seconds = 0\n", "timeout_seconds"),
+        ("port = 80\nexclude = [1]\n", "exclude"),
+        ('port = 80\nimage = "x"\n', "image: a manifest holds"),
+        ('port = 80\n[env]\nlower = "x"\n', "[env] lower"),
+        ('port = 80\n[env]\nFA1_ANTHROPIC_KEY = "x"\n', "[env] FA1_ANTHROPIC_KEY"),
+        ('port = 80\n[keys]\nMCP_ACCESS_KEY = "x"\n', "[keys] MCP_ACCESS_KEY"),
+        ("port = 80\n[env]\nA = 1\n", "[env] A: a string"),
+        ('port = 80\n[env]\nA = "x\\ny"\n', "[env] A: one line"),
+        ('port = 80\n[env]\nT = "x"\n[keys]\nT = "t"\n', "T: in [env] or in [keys]"),
+    ],
+)
+def test_a_local_server_s_manifest_follows_the_app_s_rules(manifest: str, word: str | None) -> None:
+    import tomllib
+
+    from reviews import checks
+
+    problems = checks.manifest_problems(tomllib.loads(manifest))
+    if word is None:
+        assert problems == []
+    else:
+        assert any(word in problem for problem in problems), problems
+
+
 def test_a_branch_the_review_app_does_not_take(world: World) -> None:
     with pytest.raises(NotFound, match="no branch"):
         world.store.submit("none", "proposals/none", "None")
@@ -298,6 +338,13 @@ def test_a_branch_the_review_app_does_not_take(world: World) -> None:
         (fixed("claude-code", "sonnet"), "model 'sonnet' is not a model of the agent 'claude-code'"),
         (fixed("claude-code", "gpt"), "model 'gpt' is not in models.toml"),
         (fixed("nobody", "cc-sonnet"), "agent 'nobody' is not an agent of agents/"),
+        # A local MCP server: an id FA1's own tool server takes, a manifest the app refuses, a
+        # folder with no Dockerfile, and an agent that names a server the tree lacks.
+        (server("files", "port = 80\n"), "files is the id of a tool"),
+        (server("jira", "port = 0\n"), "local-mcp-servers/jira/mcp.toml: port"),
+        ({"local-mcp-servers/jira/mcp.toml": "port = 80\n"}, "local-mcp-servers/jira: no Dockerfile"),
+        ({"local-mcp-servers/dates/mcp.toml": None, "local-mcp-servers/dates/Dockerfile": None,
+          "local-mcp-servers/dates/server.py": None}, "tool 'dates'"),
     ]
     for number, (files, word) in enumerate(cases):
         world.branch(f"proposals/bad{number}", files)
@@ -330,7 +377,7 @@ def test_a_changed_flow_needs_a_higher_version_than_the_one_that_runs(world: Wor
     # A step on a queue a person answers is taken: its handler is a text, and no function.
     world.branch("proposals/asked", asked("external"))
     made = world.store.submit("asked", "proposals/asked", "Asked")
-    assert made["summary"][-1] == "queues a person answers: editors"
+    assert "queues a person answers: editors" in made["summary"], made["summary"]
 
     # A step that fixes an agent and one of that agent's models is taken.
     world.branch("proposals/fixed", fixed("claude-code", "cc-sonnet"))
@@ -371,6 +418,7 @@ def test_validate_setup_reads_the_working_copy_as_it_is_and_follows_no_link(worl
             "4 agents, 9 models",
             "2 flows: code_and_review 0.2.0, hello 0.1.0",
             "2 handler modules, read and not run",
+            "local MCP servers: dates, built and run at the deploy",
         ],
     )
     # Not committed, and found all the same.

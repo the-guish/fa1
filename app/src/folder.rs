@@ -1,6 +1,7 @@
 //! The one folder the app writes to (docs/specs/app.md, "The folder"), and what it keeps there:
 //! the settings, the keys and the secrets.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,10 @@ pub struct Keys {
     /// The Cursor API key. Without it, the Cursor worker stays out (docs/specs/cursor-worker.md).
     #[serde(default)]
     pub cursor: String,
+    /// The secrets of the local MCP servers, by server and by variable
+    /// (docs/specs/local-mcp-servers.md).
+    #[serde(default)]
+    pub servers: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Folder {

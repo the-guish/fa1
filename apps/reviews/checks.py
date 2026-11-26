@@ -44,6 +44,17 @@ class Result:
 CURSOR_WORKER = "cursor"
 """The worker of FA1's Cursor container, which the app adds to the configuration itself."""
 
+LOCAL_SERVERS = "local-mcp-servers"
+"""The setup folder's local MCP servers, a folder each (docs/specs/local-mcp-servers.md)."""
+LOCAL_URL = "http://mcp-"
+"""How the app's URL of a local server starts: the configuration that runs holds the last
+deploy's local servers, which the tree's replace."""
+ROBINAUTS_TOOLS = frozenset({"sessions"})
+"""Robinauts' tools that are no tool server: a local server takes none of their ids."""
+MANIFEST_KEYS = ("title", "port", "path", "timeout_seconds", "exclude", "env", "keys")
+VARIABLE = re.compile(r"[A-Z_][A-Z0-9_]*")
+"""A variable a manifest names, as the app's reader has it: none starts with FA1_ or MCP_."""
+
 
 def table(tree: Path, name: str, into: Result) -> dict[str, Any] | None:
     """A TOML file of the tree, as its tables. A file that is missing or is not TOML is a
@@ -111,11 +122,115 @@ def models_and_agents(tree: Path, into: Result) -> tuple[dict[str, Any], dict[st
     return models, agents
 
 
+def manifest_problems(manifest: Mapping[str, Any]) -> list[str]:
+    """The problems of a local server's `mcp.toml`, by the app's own rules."""
+    problems = [
+        f"{key}: a manifest holds {', '.join(MANIFEST_KEYS)} alone"
+        for key in sorted(manifest.keys() - set(MANIFEST_KEYS))
+    ]
+    port = manifest.get("port")
+    if port is None:
+        problems.append("port: the port the server listens on")
+    elif isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        problems.append("port: a number from 1 to 65535")
+    path = manifest.get("path", "/mcp")
+    if not isinstance(path, str) or not path.startswith("/") or any(
+        c.isspace() or not c.isprintable() for c in path
+    ):
+        problems.append("path: a path that starts with /")
+    if "title" in manifest and not isinstance(manifest["title"], str):
+        problems.append("title: a string")
+    timeout = manifest.get("timeout_seconds", 60)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        problems.append("timeout_seconds: a positive number")
+    exclude = manifest.get("exclude", [])
+    if not isinstance(exclude, list) or not all(isinstance(n, str) for n in exclude):
+        problems.append("exclude: a list of tool names")
+    names: dict[str, list[str]] = {}
+    for key in ("env", "keys"):
+        held = manifest.get(key, {})
+        if not isinstance(held, Mapping):
+            problems.append(f"[{key}]: a table of variables")
+            continue
+        names[key] = list(held)
+        for name, value in held.items():
+            if not VARIABLE.fullmatch(name) or name.startswith(("FA1_", "MCP_")):
+                problems.append(
+                    f"[{key}] {name}: a variable's name is upper-case letters, digits and _, "
+                    "and does not start with FA1_ or MCP_"
+                )
+            elif not isinstance(value, str):
+                problems.append(f"[{key}] {name}: a string")
+            elif any(c in value for c in "\n\r\0"):
+                problems.append(f"[{key}] {name}: one line")
+    for both in sorted(set(names.get("env", [])) & set(names.get("keys", []))):
+        problems.append(f"{both}: in [env] or in [keys], not in both")
+    return problems
+
+
+def fixed_tool_servers(config: Path | None) -> set[str]:
+    """The ids of FA1's own tool servers, in the configuration that runs."""
+    if config is None or not config.is_file():
+        return set()
+    try:
+        servers = tomllib.loads(config.read_text(encoding="utf-8")).get("tool_servers", {})
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return set()
+    return {
+        id
+        for id, server in servers.items()
+        if not (isinstance(server, Mapping) and str(server.get("url", "")).startswith(LOCAL_URL))
+    }
+
+
+def local_servers(tree: Path, taken: set[str], into: Result) -> dict[str, dict[str, Any]]:
+    """`local-mcp-servers/<id>/mcp.toml`, each as the table of `[tool_servers]` the app deploys.
+    `taken` holds the ids of FA1's own tool servers."""
+    root = tree / LOCAL_SERVERS
+    if not root.is_dir():
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    for folder in sorted(path for path in root.iterdir() if path.is_dir()):
+        at = f"{LOCAL_SERVERS}/{folder.name}"
+        if not AGENT_ID.fullmatch(folder.name):
+            into.problems.append(
+                f"{at}: a server's folder name is its id: lowercase letters, digits and -"
+            )
+            continue
+        if folder.name in taken or folder.name in ROBINAUTS_TOOLS:
+            into.problems.append(f"{at}: {folder.name} is the id of a tool FA1 or Robinauts has")
+            continue
+        if not (folder / "Dockerfile").is_file():
+            into.problems.append(f"{at}: no Dockerfile")
+            continue
+        manifest = table(tree, f"{at}/mcp.toml", into)
+        if manifest is None:
+            continue
+        problems = manifest_problems(manifest)
+        if problems:
+            into.problems += [f"{at}/mcp.toml: {problem}" for problem in problems]
+            continue
+        variable = "FA1_MCP_" + folder.name.upper().replace("-", "_") + "_KEY"
+        server: dict[str, Any] = {
+            "url": f"{LOCAL_URL}{folder.name}:{manifest['port']}{manifest.get('path', '/mcp')}",
+            "secret_env": variable,
+            "timeout_seconds": manifest.get("timeout_seconds", 60),
+        }
+        if manifest.get("exclude"):
+            server["exclude"] = manifest["exclude"]
+        found[folder.name] = server
+    return found
+
+
 def configuration(
-    models: dict[str, Any], agents: dict[str, Any], deployed: Path | None, into: Result
+    models: dict[str, Any],
+    agents: dict[str, Any],
+    deployed: Path | None,
+    into: Result,
+    local: Mapping[str, Any] | None = None,
 ) -> None:
     """Robinauts' own check of its configuration: FA1's fixed part, as the configuration that
-    runs holds it, with the tree's models and agents."""
+    runs holds it, with the tree's models, agents and local MCP servers."""
     if deployed is None or not deployed.is_file():
         into.summary.append("no configuration runs yet: the agents are checked at the deploy")
         return
@@ -136,6 +251,14 @@ def configuration(
     if any(isinstance(a, Mapping) and a.get("worker") == CURSOR_WORKER for a in agents.values()):
         workers[CURSOR_WORKER] = {"external": True}
     tables["workers"] = workers
+    # The local MCP servers that run are the last deploy's. The tree's take their place.
+    servers = {
+        id: server
+        for id, server in dict(tables.get("tool_servers", {})).items()
+        if not (isinstance(server, Mapping) and str(server.get("url", "")).startswith(LOCAL_URL))
+    }
+    servers.update(local or {})
+    tables["tool_servers"] = servers
     try:
         configure({**tables, "models": models, "agents": agents}, {})
     except ConfigError as refused:
@@ -377,11 +500,14 @@ def check(tree: Path, config: Path | None, deployed_flows: Path | None) -> Resul
     result = Result()
     settings(tree, result)
     found = models_and_agents(tree, result)
+    local = local_servers(tree, fixed_tool_servers(config), result)
     if found is not None:
         models, agents = found
-        configuration(models, agents, config, result)
+        configuration(models, agents, config, result, local)
         result.summary.insert(0, f"{len(agents)} agents, {len(models)} models")
     flows(tree, deployed_flows, result, found)
+    if local:
+        result.summary.append(f"local MCP servers: {', '.join(local)}, built and run at the deploy")
     return result
 
 

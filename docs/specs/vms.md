@@ -94,6 +94,8 @@ The recipes are cloud-init files and shell scripts in this repository, under `vm
 
 - The setup folder in the control VM. Mode 2 mounts it, and a VM mounts no folder of the host:
   the review app needs another way to it ([review-app.md](review-app.md)).
+- The local MCP servers ([local-mcp-servers.md](local-mcp-servers.md)): they run in the control VM's Docker, and the
+  firewall opens their ports on the link.
 - The link on Windows, where QEMU's Unix sockets need checking. A loopback TCP port is the
   fallback.
 - The config drive as a cloud-init seed, which needs the label `cidata`.

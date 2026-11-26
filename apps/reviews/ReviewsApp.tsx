@@ -12,6 +12,7 @@ const API = "/reviews/api";
 const APPROVER = "reviews/approver";
 
 const HANDLERS = "flows/handlers/";
+const LOCAL_SERVERS = "local-mcp-servers/";
 
 type State = "pending" | "closed";
 type Status = "submitted" | "approved" | "rejected";
@@ -307,6 +308,9 @@ function FilePanel({ file }: { file: Changed }) {
         {file.status === "deleted" ? <span className="reviews-new">deleted</span> : null}
         {path.startsWith(HANDLERS) ? (
           <span className="reviews-code">code that runs in the control plane</span>
+        ) : null}
+        {path.startsWith(LOCAL_SERVERS) ? (
+          <span className="reviews-code">code that runs in a container</span>
         ) : null}
         <span className="reviews-counts">
           <span className="reviews-plus">+{added}</span>{" "}
