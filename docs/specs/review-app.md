@@ -59,13 +59,18 @@ behind supergateway ([flows.md](flows.md), "Authoring").
 - An agent with the key writes the working copy and submits a changelist. It approves
   nothing.
 - The git server brings the working copy's `main` to the setup folder's commit as it starts.
-  Work left on `main` then moves to a branch `kept/<time>`.
+  Commits the designer left on `main` then move to a branch `kept/<time>`.
+- The git server keeps the folder's commit that `main` last followed, as `refs/fa1/followed`.
+  A commit of `main` outside that history is the designer's, so a rewritten history moves to no
+  `kept/` branch.
 - The git server looks at the setup folder's commit every two seconds while it runs. A new
   commit moves `main` to it, as at the start, and nothing else.
 - The person may rewrite the setup folder's history, with a rebase or a force push. `main` then
   follows to the new commit. A branch of the designer that started from the old `main` is
   refused at its next submit, and the designer makes it again from `main`.
-- The designer's branches and its files not yet committed stay as they are.
+- The designer's checked-out branch stays checked out. A move of `main` never switches it.
+- The designer's files not yet committed stay as they are. A file that conflicts with the new
+  commit holds `main` back, and the git server tries again every 30 seconds.
 - The designer's commits are by `Flow designer`. The setup folder's history then shows the
   changes the designer wrote.
 - The working copy is one folder. One designer turn works in it at a time.
