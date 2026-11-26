@@ -23,6 +23,10 @@ screen, and add `jira` to an agent's `tools`.
 - The id of one of FA1's tool servers, or of a tool of Robinauts such as `sessions`, is refused.
 - Every file is text, as everywhere in the setup folder. A changelist holds a server's files
   like any other ([review-app.md](review-app.md), "Submitting").
+- A server's folder holds plain files and folders. A link stops the deploy, as the review app
+  refuses it: followed, it would copy a file from outside the folder into the image.
+- A file keeps its executable mark in the copy FA1 builds from, so a Dockerfile may run a script
+  of the folder directly.
 
 ## The manifest
 
@@ -100,7 +104,8 @@ For each server, FA1:
    variables of `[env]`.
 3. Makes the server's access key at the first start, and keeps it in `secrets/`.
 4. Writes `secrets/mcp-<id>.env`: `MCP_ACCESS_KEY`, `MCP_PORT`, `MCP_PATH`, and each key of
-   `[keys]` with the value the person entered.
+   `[keys]` with the value the person entered. Each value is quoted, so `$`, `#` and quotes reach
+   the server as typed.
 5. Adds `[tool_servers.<id>]` to Robinauts' configuration. Its URL is
    `http://mcp-<id>:<port><path>`, and its key is in the variable `FA1_MCP_<ID>_KEY`: the id in
    upper case, with `_` for `-`.

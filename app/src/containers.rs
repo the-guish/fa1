@@ -444,12 +444,14 @@ impl Project {
             fs::remove_dir_all(&local_root)?;
         }
         for server in &setup.local_servers {
-            for (path, bytes) in &server.files {
+            for (path, bytes, executable) in &server.files {
                 let path = local_root.join(&server.id).join(path);
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::write(&path, bytes)?;
+                // The build copies each file with its mode: a script the image runs keeps
+                // its mark.
+                folder::write_bytes(&path, bytes, if *executable { 0o755 } else { 0o644 })?;
             }
             let access = self
                 .folder
@@ -459,7 +461,7 @@ impl Project {
             let pairs: Vec<(&str, &str)> =
                 env.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
             self.folder
-                .write_secret(&server.env_file(), &env_file(&pairs))?;
+                .write_secret(&server.env_file(), &quoted_env_file(&pairs))?;
             keyed.push((server.variable(), access));
         }
         // The variables of a server that no longer runs go, its secrets with them. Its access
@@ -763,6 +765,22 @@ fn env_file(pairs: &[(&str, &str)]) -> String {
         .collect()
 }
 
+/// `NAME="value"` lines, each value as the person typed it. Compose reads `$` in an env file as
+/// the start of a variable, and ` #` as the start of a comment, but in a double-quoted value
+/// only where `\$`, `\"` and `\\` do not escape them.
+fn quoted_env_file(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| {
+            let escaped = value
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('$', "\\$");
+            format!("{name}=\"{escaped}\"\n")
+        })
+        .collect()
+}
+
 trait ArgsFrom {
     fn args_from(self, args: &[&str]) -> Self;
 }
@@ -777,7 +795,8 @@ impl ArgsFrom for Action {
 #[cfg(test)]
 mod tests {
     use super::{
-        APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, control_env, env_file, token_step,
+        APPS, BUILT, CURSOR_WORKER, TokenStep, collect_files, control_env, env_file,
+        quoted_env_file, token_step,
     };
     use crate::control::{CODE, CURSOR, ServiceToken};
     use crate::folder::Keys;
@@ -864,6 +883,27 @@ mod tests {
                 token_step(saved_id, saved, &held, CODE.token_name),
                 expected,
                 "saved {saved_id:?} {saved:?}, held {held:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quoted_env_file_keeps_every_character_of_a_value() {
+        // (the value typed) -> the line Compose reads back as that value: verified with
+        // `docker compose run` and printenv, Compose 2.26.
+        let cases = [
+            ("plain", r#"K="plain""#),
+            ("pa$word", r#"K="pa\$word""#),
+            ("pa${HOME}x", r#"K="pa\${HOME}x""#),
+            ("pass #word", r#"K="pass #word""#),
+            (r#"it's "q" \ end"#, r#"K="it's \"q\" \\ end""#),
+            (r"\n", r#"K="\\n""#),
+        ];
+        for (value, line) in cases {
+            assert_eq!(
+                quoted_env_file(&[("K", value)]),
+                format!("{line}\n"),
+                "{value}"
             );
         }
     }

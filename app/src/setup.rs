@@ -621,7 +621,7 @@ mod tests {
         let files: Vec<_> = dates
             .files
             .iter()
-            .map(|(p, _)| p.display().to_string())
+            .map(|(p, _, _)| p.display().to_string())
             .collect();
         assert_eq!(files, ["Dockerfile", "mcp.toml", "server.py"]);
         assert!(setup.missing_keys.is_empty() && setup.left_out_for_keys.is_empty());
