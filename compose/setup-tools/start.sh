@@ -54,8 +54,10 @@ sync_main() {
     quiet branch --quiet --force main FETCH_HEAD
 }
 
-# Follows the setup folder while the server runs: an approval or the person's own commit moves
-# main forward. It only fast-forwards, so it never touches the designer's work.
+# Follows the setup folder while the server runs: an approval, the person's own commit, or a
+# history the person rewrote moves main to the folder's commit, as at the start. A fast-forward
+# alone would leave main behind a rewritten history, and the designer's branches could then never
+# start from the folder's commit again.
 follow_main() {
     seen=$(setup_head)
     while sleep 2; do
@@ -64,14 +66,7 @@ follow_main() {
             continue
         fi
         seen=$now
-        if [ ! -d "$work/.git" ]; then
-            (sync_main) || true
-        elif [ "$(git -C "$work" symbolic-ref --quiet --short HEAD || true)" = main ]; then
-            (cd "$work" && quiet fetch --quiet --no-tags "$setup" HEAD \
-                && quiet merge --quiet --ff-only FETCH_HEAD) 2>/dev/null || true
-        else
-            (cd "$work" && quiet fetch --quiet --no-tags "$setup" HEAD:main) 2>/dev/null || true
-        fi
+        (sync_main) || true
     done
 }
 
