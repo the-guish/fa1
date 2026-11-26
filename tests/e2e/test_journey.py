@@ -334,7 +334,7 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     dates_key = (HOME / "secrets" / "mcp-dates.key").read_text().strip()
     assert f"FA1_MCP_DATES_KEY={dates_key}\n" in code_env
     assert dates_key in (HOME / "secrets" / "control.env").read_text()
-    assert f"MCP_ACCESS_KEY={dates_key}\n" in (HOME / "secrets" / "mcp-dates.env").read_text()
+    assert f'MCP_ACCESS_KEY="{dates_key}"\n' in (HOME / "secrets" / "mcp-dates.env").read_text()
     assert (HOME / "compose/local-mcp-servers/dates/server.py").read_bytes() == (
         SETUP / "local-mcp-servers/dates/server.py"
     ).read_bytes()
