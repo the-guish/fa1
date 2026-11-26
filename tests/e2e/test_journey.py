@@ -395,13 +395,15 @@ def test_the_journey_from_a_fresh_folder_to_its_removal(app) -> None:
     assert "FA1_MCP_DATES_KEY" not in (HOME / "secrets" / "code.env").read_text()
     click(driver, "nav button[data-go=keys]")
     form = driver.find_element(By.ID, "key-form")
-    form.find_element(By.NAME, "server:dates:DATES_NOTE").send_keys("a-note")
+    # A value with what an env file reads specially: it reaches the server as typed.
+    note = 'a $note #1 "q" \\ end'
+    form.find_element(By.NAME, "server:dates:DATES_NOTE").send_keys(note)
     click(driver, "#key-form button[type=submit]")
     WebDriverWait(driver, 10).until(lambda d: screen(d, "run").is_displayed())
     act(driver, "#start", "Everything is up.", START_SECONDS)
-    assert docker("exec", "fa1-mcp-dates-1", "printenv", "DATES_NOTE").strip() == "a-note"
-    assert "a-note" not in (HOME / "secrets" / "code.env").read_text()
-    assert "a-note" not in (HOME / "secrets" / "control.env").read_text()
+    assert docker("exec", "fa1-mcp-dates-1", "printenv", "DATES_NOTE") == note + "\n"
+    assert "$note" not in (HOME / "secrets" / "code.env").read_text()
+    assert "$note" not in (HOME / "secrets" / "control.env").read_text()
     assert "FA1_MCP_DATES_KEY" in (HOME / "secrets" / "code.env").read_text()
     token = (HOME / "secrets" / "worker_token").read_text()
     cursor_token = (HOME / "secrets" / "cursor_token").read_text()

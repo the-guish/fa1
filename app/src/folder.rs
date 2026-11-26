@@ -144,8 +144,12 @@ fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
 }
 
 pub fn write_file(path: &Path, text: &str, mode: u32) -> std::io::Result<()> {
+    write_bytes(path, text.as_bytes(), mode)
+}
+
+pub fn write_bytes(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     let mut file = fs::File::create(path)?;
-    file.write_all(text.as_bytes())?;
+    file.write_all(bytes)?;
     set_mode(path, mode)
 }
 

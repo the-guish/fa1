@@ -29,6 +29,10 @@ const MANIFEST_KEYS: &[&str] = &[
 /// FA1's.
 const RESERVED_PREFIXES: &[&str] = &["FA1_", "MCP_"];
 
+/// A file of a server's folder: its path inside the folder, its bytes, and whether it is
+/// executable.
+pub type ServerFile = (PathBuf, Vec<u8>, bool);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalServer {
     pub id: String,
@@ -41,8 +45,9 @@ pub struct LocalServer {
     pub env: BTreeMap<String, String>,
     /// `[keys]`: the secrets the server needs, by variable, with their labels.
     pub keys: BTreeMap<String, String>,
-    /// The server's folder: its files, by path inside it.
-    pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// The server's folder: its files, by path inside it, with their bytes and whether each is
+    /// executable. A Dockerfile may run a script of the folder directly.
+    pub files: Vec<ServerFile>,
 }
 
 impl LocalServer {
@@ -305,8 +310,10 @@ pub fn missing_keys(server: &LocalServer, given: Option<&BTreeMap<String, String
         .collect()
 }
 
-/// Every file of a server's folder, by its path inside it. Python's caches are left out.
-fn collect(dir: &Path, at: &Path, into: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<(), String> {
+/// Every file of a server's folder, by its path inside it. Python's caches are left out. A link
+/// is refused, as the review app refuses it: followed, it would copy a file from outside the
+/// folder into the image, such as one of the app's secrets.
+fn collect(dir: &Path, at: &Path, into: &mut Vec<ServerFile>) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -316,20 +323,81 @@ fn collect(dir: &Path, at: &Path, into: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<
         }
         let path = entry.path();
         let inside = at.join(&name);
-        if path.is_dir() {
+        // The entry's own type: a link is not followed.
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        if kind.is_symlink() {
+            return Err(format!(
+                "{}: a link, and a local server's folder holds plain files and folders",
+                path.display()
+            ));
+        } else if kind.is_dir() {
             collect(&path, &inside, into)?;
         } else {
             let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            into.push((inside, bytes));
+            into.push((inside, bytes, executable(&path)));
         }
     }
     Ok(())
+}
+
+/// Whether a file is executable, by its owner, group or anyone.
+#[cfg(unix)]
+fn executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn executable(_path: &Path) -> bool {
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::{access_key_variable, compose_yaml, container_env, missing_keys, parse};
     use std::collections::BTreeMap;
+
+    /// A server's folder on real files: an executable script keeps its mark, and a link is
+    /// refused, whether it points outside the folder or back at it.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_keeps_its_executables_and_holds_no_link() {
+        use std::fs;
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = std::env::temp_dir().join(format!("fa1-local-servers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join("local-mcp-servers/s");
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        fs::write(dir.join("mcp.toml"), "port = 80\n").unwrap();
+        fs::write(dir.join("Dockerfile"), "FROM scratch\n").unwrap();
+        fs::write(dir.join("bin/run.sh"), "#!/bin/sh\n").unwrap();
+        fs::set_permissions(dir.join("bin/run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let servers = super::read(&root, &[]).unwrap();
+        let marks: Vec<_> = servers[0]
+            .files
+            .iter()
+            .map(|(p, _, x)| (p.display().to_string(), *x))
+            .collect();
+        assert!(
+            marks.contains(&("bin/run.sh".to_string(), true)),
+            "{marks:?}"
+        );
+        assert!(
+            marks.contains(&("Dockerfile".to_string(), false)),
+            "{marks:?}"
+        );
+        // (the link's name, where it points)
+        fs::write(root.join("secret"), "s\n").unwrap();
+        for (name, target) in [("leak", root.join("secret")), ("loop", ".".into())] {
+            symlink(&target, dir.join(name)).unwrap();
+            let error = super::read(&root, &[]).unwrap_err();
+            assert!(error.contains(name) && error.contains("a link"), "{error}");
+            fs::remove_file(dir.join(name)).unwrap();
+        }
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn a_manifest_is_read_or_refused_with_its_key() {
